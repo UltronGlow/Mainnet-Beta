@@ -226,6 +226,9 @@ func verifyHeaderExtern(currentExtra *HeaderExtra, verifyExtra *HeaderExtra) err
 	if err != nil {
 		return err
 	}
+	if currentExtra.GrantProfitHash != verifyExtra.GrantProfitHash {
+		return errors.New("Compare GrantProfitHash, current is " + currentExtra.GrantProfitHash.String() + ". but verify is " + verifyExtra.GrantProfitHash.String())
+	}
 	return nil
 }
 

@@ -570,6 +570,7 @@ func (s *Snapshot) copy() *Snapshot {
 				OldBandwidth:new(big.Int).Set(bw.OldBandwidth),
 				BurnRatio:new(big.Int).Set(bw.BurnRatio),
 				DepositMakeup:new(big.Int).Set(bw.DepositMakeup),
+				AdjustCount: bw.AdjustCount,
 			}
 		}
 	}
@@ -925,7 +926,14 @@ func (s *Snapshot) apply(headers []*types.Header, db ethdb.Database) (*Snapshot,
 
 		snap.compareGrantProfitHash(headerExtra.GrantProfit,db,header)
 
-		snap.updateGrantProfit(headerExtra.GrantProfit, db,header.Hash(),header.Number.Uint64())
+		if header.Number.Uint64() <PosrIncentiveEffectNumber{
+			snap.updateGrantProfit(headerExtra.GrantProfit, db,header.Hash(),header.Number.Uint64())
+		}else{
+			err=snap.updateGrantProfit2(headerExtra.GrantProfitHash,db,header)
+			if err!=nil{
+				return nil,err
+			}
+		}
 		if header.Number.Uint64() == lockMergeNumber  {
 			snap.FlowRevenue.updateMergeLockData(db,snap.Period,snap.Hash)
 		}
@@ -971,7 +979,10 @@ func (s *Snapshot) apply(headers []*types.Header, db ethdb.Database) (*Snapshot,
 		if header.Number.Uint64() ==StoragePledgeOptEffectNumber{
 			snap.initBandwidthMakeup(header.Number)
 		}
-		if header.Number.Uint64() ==(StoragePledgeOptEffectNumber+BandwidthMakeupPunishDay*snap.getBlockPreDay()){
+		if header.Number.Uint64() ==PosrIncentiveEffectNumber{
+			snap.initBandwidthMakeup2(header.Number)
+		}
+		if header.Number.Uint64() ==(PosrIncentiveEffectNumber+BandwidthAdjustPeriodDay*snap.getBlockPreDay()){
 			snap.setBandwidthMakeupPunish(header,db)
 		}
 	}
@@ -2210,7 +2221,7 @@ func (s *Snapshot) updateSignerNumber(sigers []common.Address, headerNumber uint
 }
 
 func (pitem *PledgeItem) copy() *PledgeItem {
-	return &PledgeItem{
+	copyItem:=&PledgeItem{
 		Amount:          new(big.Int).Set(pitem.Amount),
 		PledgeType:      pitem.PledgeType,
 		Playment:        new(big.Int).Set(pitem.Playment),
@@ -2222,7 +2233,15 @@ func (pitem *PledgeItem) copy() *PledgeItem {
 		RevenueAddress:  pitem.RevenueAddress,
 		RevenueContract: pitem.RevenueContract,
 		MultiSignature:  pitem.MultiSignature,
+		BurnAddress: pitem.BurnAddress,
 	}
+	if pitem.BurnRatio!=nil{
+		copyItem.BurnRatio=new(big.Int).Set(pitem.BurnRatio)
+	}
+	if pitem.BurnAmount!=nil{
+		copyItem.BurnAmount=new(big.Int).Set(pitem.BurnAmount)
+	}
+	return copyItem
 }
 
 func NewPledgeItem(amount *big.Int) *PledgeItem {
@@ -2238,6 +2257,9 @@ func NewPledgeItem(amount *big.Int) *PledgeItem {
 		RevenueAddress:  common.Address{},
 		RevenueContract: common.Address{},
 		MultiSignature:  common.Address{},
+		BurnAddress: common.Address{},
+		BurnRatio: common.Big0,
+		BurnAmount: common.Big0,
 	}
 }
 
@@ -2334,4 +2356,16 @@ func (s *Snapshot) compareGrantProfitHash(GrantProfit []consensus.GrantProfitRec
 	}
 }
 
-
+func (snap *Snapshot) updateGrantProfit2(grantProfitHash common.Hash, db ethdb.Database, header *types.Header)(error) {
+	grantProfit,err := snap.calPayProfit(db, header)
+	if err!=nil{
+		return err
+	}
+	calGrantProfitHash:=snap.calGrantProfitHash(grantProfit)
+	if grantProfitHash!=calGrantProfitHash{
+		log.Error("grantProfitHash is not same","head",grantProfitHash.String(),"cal",calGrantProfitHash.String())
+		return errors.New("grantProfitHash is not same,head:" + grantProfitHash.String() + "cal:" + calGrantProfitHash.String())
+	}
+	snap.updateGrantProfit(grantProfit,db,header.Hash(),header.Number.Uint64())
+	return nil
+}

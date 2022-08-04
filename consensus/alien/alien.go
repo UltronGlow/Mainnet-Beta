@@ -1124,6 +1124,10 @@ func (a *Alien) Finalize(chain consensus.ChainHeaderReader, header *types.Header
 		if nil != grantProfit{
 			currentHeaderExtra.GrantProfit = append(currentHeaderExtra.GrantProfit, grantProfit...)
 		}
+		if number >= PosrIncentiveEffectNumber {
+			currentHeaderExtra.GrantProfitHash=snap.calGrantProfitHash(currentHeaderExtra.GrantProfit)
+			currentHeaderExtra.GrantProfit = []consensus.GrantProfitRecord{}
+		}
 		flowHarvest := big.NewInt(0)
 		// Accumulate any block rewards and commit the final state root
 		currentHeaderExtra.LockReward, flowHarvest = accumulateRewards(currentHeaderExtra.LockReward, chain.Config(), state, header, snap, refundGas, gasReward)

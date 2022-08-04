@@ -921,7 +921,7 @@ func (api *API) GetStorageRatioValueAtNumber(number uint64,value *big.Int,part s
 		v=getBandwaith(value,number)
 	}
 	if part =="StorageRatio"{
-		v=NewStorageSnap().calStorageRatio(value)
+		v=NewStorageSnap().calStorageRatio(value,number)
 	}
 	snapshotStorage.SpledgeRatioValue=v
 	return snapshotStorage, nil
