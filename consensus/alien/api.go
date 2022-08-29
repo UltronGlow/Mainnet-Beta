@@ -996,7 +996,7 @@ type SnapshotSTGbwMakeup struct {
 }
 
 func (api *API) GetSTGBandwidthMakeup() (*SnapshotSTGbwMakeup, error) {
-	header := api.chain.GetHeaderByNumber(StoragePledgeOptEffectNumber)
+	header := api.chain.GetHeaderByNumber(PosrIncentiveEffectNumber)
 	if header == nil {
 		return nil, errUnknownBlock
 	}

@@ -56,6 +56,7 @@ const (
 	StoragePledgeOptEffectNumber = 1608207
 	FixLeaseCapacityNumber=1660014
 	PosrIncentiveEffectNumber= 1744720
+	PosrExitNewRuleEffectNumber = 1953447
 )
 
 var (
