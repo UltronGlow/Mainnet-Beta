@@ -181,11 +181,15 @@ func (s *LockData) updateLockData(snap *Snapshot, item LockRewardRecord, headerN
 		}
 	} else {
 		if headerNumber.Uint64() >= StorageEffectBlockNumber {
-			// flow or bandwidth reward
-			if revenue, ok := snap.RevenueStorage[item.Target]; ok {
-				revenueAddress = revenue.RevenueAddress
-				revenueContract = revenue.RevenueContract
-				multiSignature = revenue.MultiSignature
+
+			if isGTPOSRNewCalEffect(headerNumber.Uint64())&&item.IsReward==sscEnumStoragePledgeRedeemLock{
+
+			}else {
+				if revenue, ok := snap.RevenueStorage[item.Target]; ok {
+					revenueAddress = revenue.RevenueAddress
+					revenueContract = revenue.RevenueContract
+					multiSignature = revenue.MultiSignature
+				}
 			}
 		}else{
 			// flow or bandwidth reward
@@ -1102,4 +1106,52 @@ func getRentCapity(storageItem *SPledge) *big.Int{
 		}
 	}
 	return totalRentCapity
+}
+
+
+func (s *LockData) fixStorageRevertRevenue(db ethdb.Database, hash common.Hash, number uint64) interface{} {
+	rlsLockBalance,err:=s.loadRlsLockBalance(db)
+	if err != nil {
+		return err
+	}
+	for _,itemRlsLock:=range rlsLockBalance{
+		lockBalance:=itemRlsLock.LockBalance
+		for _,itemBlockLock:=range lockBalance{
+			for _,itemWhichLock:=range itemBlockLock{
+				if itemWhichLock.RevenueAddress!=itemWhichLock.TargetAddress{
+					itemWhichLock.RevenueAddress=itemWhichLock.TargetAddress
+				}
+			}
+		}
+	}
+	s.saveCacheL2(db, rlsLockBalance, hash,number)
+	return nil
+}
+
+
+func (s *LockData) loadRlsLockBalance(db ethdb.Database) (map[common.Address]*RlsLockData , error) {
+	rlsLockBalance := make(map[common.Address]*RlsLockData)
+
+	items := []*PledgeItem{}
+	for _, pledges := range s.FlowRevenue {
+		for _, pledge1 := range pledges.LockBalance {
+			for _, pledge2 := range pledge1 {
+				items = append(items, pledge2)
+			}
+		}
+	}
+
+	s.appendRlsLockData(rlsLockBalance, items)
+
+	items, err := s.loadCacheL1(db)
+	if err != nil {
+		return rlsLockBalance,err
+	}
+	s.appendRlsLockData(rlsLockBalance, items)
+	items, err = s.loadCacheL2(db)
+	if err != nil {
+		return rlsLockBalance,err
+	}
+	s.appendRlsLockData(rlsLockBalance, items)
+	return rlsLockBalance,nil
 }

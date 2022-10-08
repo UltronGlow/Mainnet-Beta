@@ -213,6 +213,11 @@ web3._extend({
 			call: 'alien_getSTGBandwidthMakeup',
 			params: 0
 		}),
+        new web3._extend.Method({
+			name: 'getSnapshotReleaseAtNumber2',
+			call: 'alien_getSnapshotReleaseAtNumber2',
+			params: 4
+		}),
 	]
 });
 `

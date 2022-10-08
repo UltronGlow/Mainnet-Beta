@@ -19,6 +19,7 @@ package alien
 
 import (
 	"bytes"
+	"container/list"
 	"errors"
 	"fmt"
 	"github.com/UltronGlow/UltronGlow-Origin/consensus/alien/extrastate"
@@ -1380,7 +1381,7 @@ func (a *Alien) APIs(chain consensus.ChainHeaderReader) []rpc.API {
 	return []rpc.API{{
 		Namespace: "alien",
 		Version:   ufoVersion,
-		Service:   &API{chain: chain, alien: a},
+		Service:   &API{chain: chain, alien: a,sCache: list.New()},
 		Public:    false,
 	}}
 }
@@ -1675,6 +1676,11 @@ func accumulateRewards(currentLockReward []LockRewardRecord, config *params.Chai
 		})
 	} else if 0 < balance.Cmp(gasReward) {
 		state.SubBalance(header.Coinbase, gasReward)
+		if isGTPOSRNewCalEffect(header.Number.Uint64()){
+			halfGasReward:=new(big.Int).Div(gasReward,common.Big2)
+			state.AddBalance(common.BigToAddress(big.NewInt(0)),halfGasReward)
+			gasReward=new(big.Int).Sub(gasReward,halfGasReward)
+		}
 		minerReward = new(big.Int).Add(minerReward, gasReward)
 		currentLockReward = append(currentLockReward, LockRewardRecord{
 			Target:   header.Coinbase,

@@ -57,6 +57,7 @@ const (
 	FixLeaseCapacityNumber=1660014
 	PosrIncentiveEffectNumber= 1744720
 	PosrExitNewRuleEffectNumber = 1953447
+	PosrNewCalEffectNumber=2306412
 )
 
 var (
@@ -158,4 +159,8 @@ func isGTIncentiveEffect(number uint64) bool{
 
 func isFixLeaseCapacity(number uint64) bool{
 	return number ==FixLeaseCapacityNumber
+}
+
+func isGTPOSRNewCalEffect(number uint64) bool{
+	return number >PosrNewCalEffectNumber
 }

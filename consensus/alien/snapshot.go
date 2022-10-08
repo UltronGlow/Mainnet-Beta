@@ -985,6 +985,9 @@ func (s *Snapshot) apply(headers []*types.Header, db ethdb.Database) (*Snapshot,
 		if header.Number.Uint64() ==(PosrIncentiveEffectNumber+BandwidthAdjustPeriodDay*snap.getBlockPreDay()){
 			snap.setBandwidthMakeupPunish(header,db)
 		}
+		if header.Number.Uint64() ==PosrNewCalEffectNumber{
+			snap.fixStorageRevertRevenue(header,db)
+		}
 	}
 	snap.Number += uint64(len(headers))
 	snap.Hash = headers[len(headers)-1].Hash()
@@ -2369,3 +2372,11 @@ func (snap *Snapshot) updateGrantProfit2(grantProfitHash common.Hash, db ethdb.D
 	snap.updateGrantProfit(grantProfit,db,header.Hash(),header.Number.Uint64())
 	return nil
 }
+
+func (s *Snapshot) fixStorageRevertRevenue(header *types.Header, db ethdb.Database) {
+	err:= s.FlowRevenue.PosPgExitLock.fixStorageRevertRevenue(db, header.Hash(),header.Number.Uint64())
+	if err != nil {
+		log.Warn("fixStorageRevertRevenue Error", "err", err)
+	}
+}
+

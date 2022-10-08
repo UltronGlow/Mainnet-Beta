@@ -19,6 +19,7 @@
 package alien
 
 import (
+	"container/list"
 	"github.com/UltronGlow/UltronGlow-Origin/common"
 	"github.com/UltronGlow/UltronGlow-Origin/consensus"
 	"github.com/UltronGlow/UltronGlow-Origin/consensus/alien/extrastate"
@@ -29,13 +30,22 @@ import (
 	"github.com/UltronGlow/UltronGlow-Origin/rpc"
 	"github.com/shopspring/decimal"
 	"math/big"
+	"sync"
 )
+
 
 // API is a user facing RPC API to allow controlling the signer and voting
 // mechanisms of the delegated-proof-of-stake scheme.
 type API struct {
 	chain consensus.ChainHeaderReader
 	alien *Alien
+	sCache *list.List
+	lock sync.RWMutex
+}
+
+type SnapCache struct {
+	number uint64
+	s *Snapshot
 }
 
 // GetSnapshot retrieves the state snapshot at a given block.
@@ -44,39 +54,43 @@ func (api *API) GetSnapshot(number *rpc.BlockNumber) (*Snapshot, error) {
 	var header *types.Header
 	if number == nil || *number == rpc.LatestBlockNumber {
 		header = api.chain.CurrentHeader()
+		log.Info("api GetSnapshot", "number",number)
 	} else {
 		header = api.chain.GetHeaderByNumber(uint64(number.Int64()))
+		log.Info("api GetSnapshot", "number",number.Int64())
 	}
 	// Ensure we have an actually valid block and return its snapshot
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	return api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
-
+	return api.getSnapshotCache(header)
 }
 
 // GetSnapshotAtHash retrieves the state snapshot at a given block.
 func (api *API) GetSnapshotAtHash(hash common.Hash) (*Snapshot, error) {
+	log.Info("api GetSnapshotAtHash", "hash", hash)
 	header := api.chain.GetHeaderByHash(hash)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	return api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	return api.getSnapshotCache(header)
 }
 
 // GetSnapshotAtNumber retrieves the state snapshot at a given block.
 func (api *API) GetSnapshotAtNumber(number uint64) (*Snapshot, error) {
+	log.Info("api GetSnapshotAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	return api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	return api.getSnapshotCache(header)
 }
 
 // GetSnapshotByHeaderTime retrieves the state snapshot by timestamp of header.
 // snapshot.header.time <= targetTime < snapshot.header.time + period
 // todo: add confirm headertime in return snapshot, to minimize the request from side chain
 func (api *API) GetSnapshotByHeaderTime(targetTime uint64, scHash common.Hash) (*Snapshot, error) {
+	log.Info("api GetSnapshotByHeaderTime", "targetTime", targetTime,"scHash",scHash)
 	header := api.chain.CurrentHeader()
 	if header == nil {
 		return nil, errUnknownBlock
@@ -95,22 +109,9 @@ func (api *API) GetSnapshotByHeaderTime(targetTime uint64, scHash common.Hash) (
 	for {
 		ceil = new(big.Int).Add(new(big.Int).SetUint64(header.Time), period)
 		if target.Cmp(new(big.Int).SetUint64(header.Time)) >= 0 && target.Cmp(ceil) < 0 {
-			snap, err := api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+			snap, err := api.getSnapshotCache(header)
 
-			// replace coinbase by signer settings
 			var scSigners    []*common.Address
-			//for _, signer := range snap.Signers {
-			//	replaced := false
-			//	if _, ok := snap.SCCoinbase[*signer]; ok {
-			//		if addr, ok := snap.SCCoinbase[*signer][scHash]; ok {
-			//			replaced = true
-			//			scSigners = append(scSigners, &addr)
-			//		}
-			//	}
-			//	if !replaced {
-			//		scSigners = append(scSigners, signer)
-			//	}
-			//}
 			for signer, _ := range snap.SCCoinbase[scHash] {
 				scSigners = append(scSigners, &signer)
 			}
@@ -204,11 +205,12 @@ func (api *API) GetSnapshotByHeaderTime(targetTime uint64, scHash common.Hash) (
 
 //y add method
 func (api *API) GetSnapshotSignerAtNumber(number uint64) (*SnapshotSign, error) {
+	log.Info("api GetSnapshotSignerAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSnapshotSignAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -230,11 +232,12 @@ type SnapshotSign struct {
 
 
 func (api *API) GetSnapshotReleaseAtNumber(number uint64,part string) (*SnapshotRelease, error) {
+	log.Info("api GetSnapshotReleaseAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSnapshotSignAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -347,6 +350,7 @@ type SnapshotRelease struct {
 }
 
 func (api *API) GetSnapshotFlowAtNumber(number uint64) (*SnapshotFlow, error) {
+	log.Info("api GetSnapshotFlowAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
@@ -388,11 +392,12 @@ type FlowRecord struct {
 }
 
 func (api *API) GetSnapshotFlowMinerAtNumber(number uint64) (*SnapshotFlowMiner, error) {
+	log.Info("api GetSnapshotFlowMinerAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSnapshotFlowMinerAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -440,6 +445,7 @@ func (sf *SnapshotFlowMiner) loadFlowMinerCache(fMiner *FlowMinerSnap,flowMinerC
 
 
 func (api *API) GetSnapshotFlowReportAtNumber(number uint64) (*SnapshotFlowReport, error) {
+	log.Info("api GetSnapshotFlowReportAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
@@ -466,6 +472,7 @@ type SnapshotFlowReport struct {
 
 
 func (api *API) GetLockRewardAtNumber(number uint64) ([]LockRewardRecord, error) {
+	log.Info("api GetLockRewardAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
@@ -484,11 +491,12 @@ func (api *API) GetLockRewardAtNumber(number uint64) ([]LockRewardRecord, error)
 }
 
 func (api *API) GetSRTBalAtNumber(number uint64) (*SnapshotSRT, error) {
+	log.Info("api GetSRTBalAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSRTBalAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -510,11 +518,12 @@ type SnapshotSRT struct {
 }
 
 func (api *API) GetSPledgeAtNumber(number uint64) (*SnapshotSPledge, error) {
+	log.Info("api GetSPledgeAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSPledgeAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -579,11 +588,12 @@ type LeaseDetail2 struct {
 }
 
 func (api *API) GetStorageRewardAtNumber(number uint64,part string) (*SnapshotStorageReward, error) {
+	log.Info("api GetStorageRewardAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetStoragePledgeRewardAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -640,11 +650,11 @@ func (api *API) GetStorageRewardAtNumber(number uint64,part string) (*SnapshotSt
 			}
 
 
-		reward, err2 := NewStorageSnap().loadLockReward(api.alien.db, number, signerRewardKey)
-		if err2 == nil && reward != nil && len(reward) > 0 {
-			snapshotStorageReward.StorageReward.Reward = append(snapshotStorageReward.StorageReward.Reward, reward...)
+			reward, err2 := NewStorageSnap().loadLockReward(api.alien.db, number, signerRewardKey)
+			if err2 == nil && reward != nil && len(reward) > 0 {
+				snapshotStorageReward.StorageReward.Reward = append(snapshotStorageReward.StorageReward.Reward, reward...)
+			}
 		}
-	}
 	}
 	return snapshotStorageReward, err
 }
@@ -661,6 +671,7 @@ type StorageReward struct {
 }
 
 func (api *API) GetStorageRatiosAtNumber(number uint64) (*SnapshotStorageRatios, error) {
+	log.Info("api GetStorageRatiosAtNumber", "number", number)
 	snapshotStorageRatios := &SnapshotStorageRatios{
 		Ratios:make(map[common.Address]*StorageRatio),
 	}
@@ -680,6 +691,7 @@ type SnapshotRevertSRT struct {
 }
 
 func (api *API) GetRevertSRTAtNumber(number uint64) (*SnapshotRevertSRT, error) {
+	log.Info("api GetRevertSRTAtNumber", "number", number)
 	revertSRT,err:=NewStorageSnap().lockRevertSRT(api.alien.db,number)
 	if err != nil {
 		log.Info("Fail to decode header Extra", "err", err)
@@ -692,6 +704,7 @@ func (api *API) GetRevertSRTAtNumber(number uint64) (*SnapshotRevertSRT, error) 
 }
 
 func (api *API) GetPaysAtNumber(number uint64) (*SnapshotPay) {
+	log.Info("api GetPaysAtNumber", "number", number)
 	snapshotPay := &SnapshotPay{
 		Pays:make([]PayRecard2,0),
 	}
@@ -721,11 +734,12 @@ type SnapshotAddrSRT struct {
 }
 
 func (api *API) GetSRTBalanceAtNumber(address common.Address,number uint64) (*SnapshotAddrSRT,error) {
+	log.Info("api GetSRTBalanceAtNumber", "address",address,"number", number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSRTBalanceAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -742,6 +756,7 @@ func (api *API) GetSRTBalanceAtNumber(address common.Address,number uint64) (*Sn
 }
 
 func (api *API) GetSRTBalance(address common.Address) (*SnapshotAddrSRT,error) {
+	log.Info("api GetSRTBalance", "address",address)
 	header := api.chain.CurrentHeader()
 	if header == nil {
 		return nil, errUnknownBlock
@@ -750,11 +765,12 @@ func (api *API) GetSRTBalance(address common.Address) (*SnapshotAddrSRT,error) {
 }
 
 func (api *API) GetSPledgeInfoByAddr(address common.Address) (*SnapshotSPledgeInfo,error) {
+	log.Info("api GetSPledgeInfoByAddr", "address",address)
 	header := api.chain.CurrentHeader()
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSPledgeInfoByAddr", "err", err)
 		return nil, errUnknownBlock
@@ -800,11 +816,12 @@ type Lease3 struct {
 }
 
 func (api *API) GetSPledgeCapVerAtNumber(number uint64) (*SnapshotSPledgeCapVer, error) {
+	log.Info("api GetSPledgeCapVerAtNumber", "number",number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSPledgeCapVerAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -812,7 +829,7 @@ func (api *API) GetSPledgeCapVerAtNumber(number uint64) (*SnapshotSPledgeCapVer,
 	snapshotSPledgeCapVer := &SnapshotSPledgeCapVer{
 		SpledgeCapVer: api.calStorageVerifyPercentage(number,snapshot.getBlockPreDay(),snapshot.StorageData.copy()),
 	}
-    return snapshotSPledgeCapVer, err
+	return snapshotSPledgeCapVer, err
 }
 
 type SnapshotSPledgeCapVer struct {
@@ -866,6 +883,7 @@ type SnapshotSPledgeValue struct {
 }
 
 func (api *API) GetStorageValueAtNumber(number uint64,part string) (*SnapshotSPledgeValue, error) {
+	log.Info("api GetStorageValueAtNumber", "number",number,"part",part)
 	snapshotStorage := &SnapshotSPledgeValue{
 		SpledgeValue:common.Big0,
 	}
@@ -894,6 +912,7 @@ type SnapshotSPledgeDecimalValue struct {
 
 
 func (api *API) GetStorageDecimalValueAtNumber(number uint64,part string) (*SnapshotSPledgeDecimalValue, error) {
+	log.Info("api GetStorageDecimalValueAtNumber", "number",number,"part",part)
 	snapshotStorage := &SnapshotSPledgeDecimalValue{
 		SpledgeDecimalValue:decimal.Zero,
 	}
@@ -913,6 +932,7 @@ type SnapshotSPledgeRatioValue struct {
 }
 
 func (api *API) GetStorageRatioValueAtNumber(number uint64,value *big.Int,part string) (*SnapshotSPledgeRatioValue, error) {
+	log.Info("api GetStorageRatioValueAtNumber", "number",number,"value",value,"part",part)
 	snapshotStorage := &SnapshotSPledgeRatioValue{
 		SpledgeRatioValue:decimal.Zero,
 	}
@@ -932,6 +952,7 @@ type SnapshotSucSPledge struct {
 }
 
 func (api *API) GetSucSPledgeAtNumber(number uint64) (*SnapshotSucSPledge, error) {
+	log.Info("api GetSucSPledgeAtNumber", "number",number)
 	snapshotSucSPledge := &SnapshotSucSPledge{
 		SucSPledge:make([]common.Address,0),
 	}
@@ -947,6 +968,7 @@ type SnapshotRentSuc struct {
 }
 
 func (api *API) GetRentSucAtNumber(number uint64) (*SnapshotRentSuc, error) {
+	log.Info("api GetRentSucAtNumber", "number",number)
 	snapshotRentSuc := &SnapshotRentSuc{
 		RentSuc:make([]common.Hash,0),
 	}
@@ -963,6 +985,7 @@ type SnapshotCapSuccAddrs struct {
 }
 
 func (api *API) GetCapSuccAddrsAtNumber(number uint64) (*SnapshotCapSuccAddrs, error) {
+	log.Info("api GetCapSuccAddrsAtNumber", "number",number)
 	snapshotCapSuccAddrs := &SnapshotCapSuccAddrs{
 		CapSuccAddrs:make(map[common.Address]*big.Int),
 	}
@@ -974,6 +997,7 @@ func (api *API) GetCapSuccAddrsAtNumber(number uint64) (*SnapshotCapSuccAddrs, e
 }
 
 func (api *API) GetGrantProfitAtNumber(number uint64) ([]consensus.GrantProfitRecord, error) {
+	log.Info("api GetGrantProfitAtNumber", "number",number)
 	header := api.chain.GetHeaderByNumber(number)
 	if header == nil {
 		return nil, errUnknownBlock
@@ -996,11 +1020,12 @@ type SnapshotSTGbwMakeup struct {
 }
 
 func (api *API) GetSTGBandwidthMakeup() (*SnapshotSTGbwMakeup, error) {
+	log.Info("api GetSTGBandwidthMakeup", "number",PosrIncentiveEffectNumber)
 	header := api.chain.GetHeaderByNumber(PosrIncentiveEffectNumber)
 	if header == nil {
 		return nil, errUnknownBlock
 	}
-	snapshot,err:= api.alien.snapshot(api.chain, header.Number.Uint64(), header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	snapshot,err:= api.getSnapshotCache(header)
 	if err != nil {
 		log.Warn("Fail to GetSPledgeCapVerAtNumber", "err", err)
 		return nil, errUnknownBlock
@@ -1009,4 +1034,167 @@ func (api *API) GetSTGBandwidthMakeup() (*SnapshotSTGbwMakeup, error) {
 		STGBandwidthMakeup: snapshot.STGBandwidthMakeup,
 	}
 	return snapshotSTGbwMakeup, err
+}
+
+func (api *API) getSnapshotCache(header *types.Header) (*Snapshot, error) {
+	number:=header.Number.Uint64()
+	s:=api.findInSnapCache(number)
+	if nil!=s{
+		return s,nil
+	}
+	return api.getSnapshotByHeader(header)
+}
+
+func (api *API)findInSnapCache(number uint64) *Snapshot {
+	for i := api.sCache.Front(); i != nil; i = i.Next() {
+		v:=i.Value.(SnapCache)
+		if v.number==number{
+			return v.s
+		}
+	}
+	return nil
+}
+
+func (api *API) getSnapshotByHeader(header *types.Header) (*Snapshot,error) {
+	api.lock.Lock()
+	defer api.lock.Unlock()
+	number:=header.Number.Uint64()
+	s:=api.findInSnapCache(number)
+	if nil!=s{
+		return s,nil
+	}
+	cacheSize:=32
+	snapshot,err:= api.alien.snapshot(api.chain, number, header.Hash(), nil, nil, defaultLoopCntRecalculateSigners)
+	if err != nil {
+		log.Warn("Fail to getSnapshotByHeader", "err", err)
+		return nil, errUnknownBlock
+	}
+	api.sCache.PushBack(SnapCache{
+		number: number,
+		s:snapshot,
+	})
+	if api.sCache.Len()>cacheSize{
+		api.sCache.Remove(api.sCache.Front())
+	}
+	return snapshot,nil
+}
+
+func (api *API) GetSnapshotReleaseAtNumber2(number uint64,part string,startLNum uint64,endLNum uint64) (*SnapshotRelease, error) {
+	log.Info("api GetSnapshotReleaseAtNumber2", "number",number,"part",part,"startLNum",startLNum,"endLNum",endLNum)
+	header := api.chain.GetHeaderByNumber(number)
+	if header == nil {
+		return nil, errUnknownBlock
+	}
+	snapshot,err:= api.getSnapshotCache(header)
+	if err != nil {
+		log.Warn("Fail to GetSnapshotSignAtNumber", "err", err)
+		return nil, errUnknownBlock
+	}
+	snapshotRelease := &SnapshotRelease{
+		CandidatePledge:make(map[common.Address]*PledgeItem),
+		FlowPledge: make(map[common.Address]*PledgeItem),
+		FlowRevenue: make(map[common.Address]*LockBalanceData),
+	}
+	if part!=""{
+		if part =="candidatepledge"{
+			snapshotRelease.CandidatePledge=snapshot.CandidatePledge
+		}else if part =="flowminerpledge"{
+			if number < PledgeRevertLockEffectNumber{
+				snapshotRelease.FlowPledge=snapshot.FlowPledge
+			}
+		}else if part =="rewardlock"{
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.RewardLock,api.alien.db,startLNum,endLNum)
+		}else if part =="flowlock"{
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.FlowLock,api.alien.db,startLNum,endLNum)
+		}else if part =="bandwidthlock"{
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.BandwidthLock,api.alien.db,startLNum,endLNum)
+		}else if part =="posplexit"{
+			if snapshot.FlowRevenue.PosPgExitLock!=nil {
+				snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosPgExitLock,api.alien.db,startLNum,endLNum)
+			}
+
+		}
+	}else{
+		snapshotRelease.CandidatePledge=snapshot.CandidatePledge
+		if number < PledgeRevertLockEffectNumber{
+			snapshotRelease.FlowPledge=snapshot.FlowPledge
+		}
+		snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.RewardLock,api.alien.db,startLNum,endLNum)
+		snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.FlowLock,api.alien.db,startLNum,endLNum)
+		snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.BandwidthLock,api.alien.db,startLNum,endLNum)
+		if number >= PledgeRevertLockEffectNumber{
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosPgExitLock,api.alien.db,startLNum,endLNum)
+		}
+
+	}
+	return snapshotRelease, err
+}
+
+func (sr *SnapshotRelease) appendFRlockData2(lockData *LockData,db ethdb.Database,startLNum uint64,endLNum uint64) (error) {
+	sr.appendFR2(lockData.FlowRevenue,startLNum,endLNum)
+	items, err := lockData.loadCacheL1(db)
+	if err == nil {
+		sr.appendFRItems2(items,startLNum,endLNum)
+	}
+	items, err = lockData.loadCacheL2(db)
+	if err == nil {
+		sr.appendFRItems2(items,startLNum,endLNum)
+	}
+	return nil
+}
+func (s *SnapshotRelease) appendFRItems2(items []*PledgeItem,startLNum uint64,endLNum uint64) {
+	for _, item := range items {
+		if _, ok := s.FlowRevenue[item.TargetAddress]; !ok {
+			s.FlowRevenue[item.TargetAddress] = &LockBalanceData{
+				RewardBalance:make(map[uint32]*big.Int),
+				LockBalance: make(map[uint64]map[uint32]*PledgeItem),
+			}
+		}
+		if inLNumScope(item.StartHigh,startLNum,endLNum){
+			flowRevenusTarget := s.FlowRevenue[item.TargetAddress]
+			if _, ok := flowRevenusTarget.LockBalance[item.StartHigh]; !ok {
+				flowRevenusTarget.LockBalance[item.StartHigh] = make(map[uint32]*PledgeItem)
+			}
+			lockBalance := flowRevenusTarget.LockBalance[item.StartHigh]
+			lockBalance[item.PledgeType] = item
+		}
+	}
+}
+
+func (sr *SnapshotRelease) appendFR2(FlowRevenue map[common.Address]*LockBalanceData,startLNum uint64,endLNum uint64) (error) {
+	fr1:=FlowRevenue
+	for t1, item1 := range fr1 {
+		if _, ok := sr.FlowRevenue[t1]; !ok {
+			sr.FlowRevenue[t1] = &LockBalanceData{
+				RewardBalance:make(map[uint32]*big.Int),
+				LockBalance: make(map[uint64]map[uint32]*PledgeItem),
+			}
+		}
+		rewardBalance:=item1.RewardBalance
+		for t2, item2 := range rewardBalance {
+			sr.FlowRevenue[t1].RewardBalance[t2]=item2
+		}
+		lockBalance:=item1.LockBalance
+		for t3, item3 := range lockBalance {
+			if inLNumScope(t3,startLNum,endLNum){
+				if _, ok := sr.FlowRevenue[t1].LockBalance[t3]; !ok {
+					sr.FlowRevenue[t1].LockBalance[t3] = make(map[uint32]*PledgeItem)
+				}
+				t3LockBalance:=sr.FlowRevenue[t1].LockBalance[t3]
+				for t4,item4:=range item3{
+					if _, ok := t3LockBalance[t4]; !ok {
+						t3LockBalance[t4] = item4
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func inLNumScope(num uint64, startLNum uint64, endLNum uint64) bool {
+	if num>=startLNum&&num<=endLNum {
+		return true
+	}
+	return false
 }

@@ -3848,6 +3848,9 @@ func getAddPB(reward *big.Int, number uint64) *big.Int {
 }
 
 func getAddPB2(reward *big.Int, number uint64) *big.Int {
+	if isGTPOSRNewCalEffect(number){
+		return getAddPB3(reward,number)
+	}
 	pt200:=new(big.Int).Mul(big.NewInt(200), pb1b)
 	pt300:=new(big.Int).Mul(big.NewInt(300), pb1b)
 	addReward:=common.Big0
@@ -3888,7 +3891,50 @@ func getAddPB2(reward *big.Int, number uint64) *big.Int {
 	addReward=new(big.Int).Div(addReward,big.NewInt(1000))
 	return addReward
 }
-
+func getAddPB3(reward *big.Int, number uint64) *big.Int {
+	pt200:=new(big.Int).Mul(big.NewInt(200), pb1b)
+	pt300:=new(big.Int).Mul(big.NewInt(300), pb1b)
+	addReward:=common.Big0
+	if reward.Cmp(pt200)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(425))
+	}
+	if reward.Cmp(pt200)>=0&&reward.Cmp(pt300)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(400))
+	}
+	pt400:=new(big.Int).Mul(big.NewInt(400), pb1b)
+	if reward.Cmp(pt300)>=0&&reward.Cmp(pt400)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(375))
+	}
+	pt500:=new(big.Int).Mul(big.NewInt(500), pb1b)
+	if reward.Cmp(pt400)>=0&&reward.Cmp(pt500)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(350))
+	}
+	pt600:=new(big.Int).Mul(big.NewInt(600), pb1b)
+	if reward.Cmp(pt500)>=0&&reward.Cmp(pt600)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(325))
+	}
+	pt700:=new(big.Int).Mul(big.NewInt(700), pb1b)
+	if reward.Cmp(pt600)>=0&&reward.Cmp(pt700)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(300))
+	}
+	pt800:=new(big.Int).Mul(big.NewInt(800), pb1b)
+	if reward.Cmp(pt700)>=0&&reward.Cmp(pt800)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(275))
+	}
+	pt900:=new(big.Int).Mul(big.NewInt(900), pb1b)
+	if reward.Cmp(pt800)>=0&&reward.Cmp(pt900)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(250))
+	}
+	pt1000:=new(big.Int).Mul(big.NewInt(1000), pb1b)
+	if reward.Cmp(pt900)>=0&&reward.Cmp(pt1000)<0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(225))
+	}
+	if reward.Cmp(pt1000)>=0{
+		addReward=new(big.Int).Mul(reward,big.NewInt(200))
+	}
+	addReward=new(big.Int).Div(addReward,big.NewInt(1000))
+	return addReward
+}
 func getBandwidthPledgeRatio(bandwidth *big.Int) decimal.Decimal{
 	if bandwidth.Cmp(big.NewInt(1000))>0{
 		return decimal.NewFromFloat(4.9829)
