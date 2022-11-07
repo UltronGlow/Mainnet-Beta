@@ -58,6 +58,9 @@ const (
 	PosrIncentiveEffectNumber= 1744720
 	PosrExitNewRuleEffectNumber = 1953447
 	PosrNewCalEffectNumber=2306412
+	PosNewEffectNumber= 2558551
+	payPOSExitInterval = 1 * 60 * 60 + 50*60  //  pay bandwidth reward  interval every day
+	checkPOSAutoExit= 1 * 60 * 60 + 60*60
 )
 
 var (
@@ -73,6 +76,14 @@ var (
 	novalidPktime=uint64(7)
 	novalidVfPktime = uint64(30)
 	maximumRentDay=big.NewInt(360)
+	posCommitPeriod=big.NewInt(365+365/2) //1.5 year
+	posBeyondCommitPeriod=big.NewInt(30) //30 day
+	posWithinCommitPeriod=big.NewInt(30) //30 day
+	posMaxMainCandidateNum = 11
+	posCandidateAvgRate = big.NewInt(70) //70%
+	minCndEntrustPledgeBalance = new(big.Int).Mul(big.NewInt(1e+18), big.NewInt(1))
+	maxPosContinueDayFail      =uint64(30)
+	posDistributionDefaultRate =big.NewInt(10000)
 )
 
 func (a *Alien) blockPerDay() uint64 {
@@ -140,6 +151,25 @@ func isPayPosPledgeExit(number uint64, period uint64) bool {
 	blockPerDay := secondsPerDay / period
 	return block == number%blockPerDay && block != number
 }
+
+func isPayPosExit(number uint64, period uint64) bool {
+	if number < PosNewEffectNumber {
+		return false
+	}
+	block := payPOSExitInterval / period
+	blockPerDay := secondsPerDay / period
+	return block == number%blockPerDay && block != number
+}
+
+func isCheckPOSAutoExit(number uint64, period uint64) bool {
+	if number < PosNewEffectNumber {
+		return false
+	}
+	block := checkPOSAutoExit / period
+	blockPerDay := secondsPerDay / period
+	return block == number%blockPerDay && block != number
+}
+
 func  (a *Alien) notVerifyPkHeader(number uint64) bool{
 	r1:=	number >=storagePledgeTmpVerifyEffectNumber && number <=storagePledgeTmpVerifyEffectNumber+a.blockPerDay()*novalidPktime
 	r2:= number >=storagePledgeTmpVerifyEffectNumberV2 && number <=storagePledgeTmpVerifyEffectNumberV2+a.blockPerDay()*novalidVfPktime
@@ -163,4 +193,7 @@ func isFixLeaseCapacity(number uint64) bool{
 
 func isGTPOSRNewCalEffect(number uint64) bool{
 	return number >PosrNewCalEffectNumber
+}
+func isGEPOSNewEffect(number uint64) bool{
+	return number >=PosNewEffectNumber
 }

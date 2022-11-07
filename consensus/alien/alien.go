@@ -1142,11 +1142,6 @@ func (a *Alien) Finalize(chain consensus.ChainHeaderReader, header *types.Header
 			state.AddBalance(proposer, refund)
 		}
 		if es!=nil {
-			//es.LoadLockAccounts(parentHeaderExtra.LockAccountsRoot)
-			// process extrastate grantlist
-
-			//snap.updateLockRevenueRls(currentHeaderExtra.LockReward,header.Number,es)
-
 			harvest := big.NewInt(0)
 			var revertSrt []ExchangeSRTRecord
 			snap1 := snap.copy()
@@ -1190,14 +1185,27 @@ func (a *Alien) Finalize(chain consensus.ChainHeaderReader, header *types.Header
 			if header.Number.Uint64() >=PledgeRevertLockEffectNumber {
 				currentHeaderExtra.SRTDataRoot = snap1.SRT.Root()
 			}
+			if isGEPOSNewEffect(number){
+				currentHeaderExtra.CandidateAutoExit,currentHeaderExtra.CandidatePEntrustExit=snap1.checkCandidateAutoExit(header.Number.Uint64(),currentHeaderExtra.CandidateAutoExit,state,currentHeaderExtra.CandidatePEntrustExit)
+			}
 		}
+
 		a.RepairBal(state,number)
 		if number%(snap.config.MaxSignerCount*snap.LCRS) == (snap.config.MaxSignerCount*snap.LCRS - 1) {
 			if number > tallyRevenueEffectBlockNumber {
-				currentHeaderExtra.ModifyPredecessorVotes = snap.updateTallyState(state)
+				if number < PosNewEffectNumber {
+					currentHeaderExtra.ModifyPredecessorVotes = snap.updateTallyState(state)
+				}else{
+					currentHeaderExtra.ModifyPredecessorVotes = snap.updateTallyStateV2()
+				}
+
 			}
 			if number >= MinerUpdateStateFixBlockNumber {
-				currentHeaderExtra.MinerStake = snap.updateMinerState(state)
+				if number < PosNewEffectNumber {
+					currentHeaderExtra.MinerStake = snap.updateMinerState(state)
+				}else{
+					currentHeaderExtra.MinerStake = snap.updateMinerStateV2()
+				}
 			}
 		}
 	} else {
@@ -1494,7 +1502,7 @@ func paymentPledge(hasContract bool, pledge *PledgeItem, state *state.StateDB, h
 	}
 	zeroHash := common.BigToAddress(big.NewInt(0))
 	payAddress := nilHash
-	if !hasContract || nilHash == pledge.RevenueContract || zeroHash == pledge.RevenueContract {
+	if !hasContract || isRevenueContractNil(pledge,header.Number.Uint64()) {
 		if nilHash == pledge.MultiSignature || zeroHash == pledge.MultiSignature {
 			payAddress = pledge.RevenueAddress
 		} else {
@@ -1829,4 +1837,14 @@ func isGrantProfitOneTimeBlockNumber(header *types.Header) bool {
 		return true
 	}
 	return false
+}
+
+func isRevenueContractNil(pledge *PledgeItem, number uint64) bool {
+	if isGEPOSNewEffect(number)&&(pledge.PledgeType==sscEnumSignerReward||pledge.PledgeType==sscEnumPosExitLock){
+		return true
+	}else{
+		nilHash := common.Address{}
+		zeroHash := common.BigToAddress(big.NewInt(0))
+		return nilHash == pledge.RevenueContract || zeroHash == pledge.RevenueContract
+	}
 }

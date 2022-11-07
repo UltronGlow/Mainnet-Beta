@@ -68,6 +68,7 @@ var (
 	minPledgeStorageCapacity= decimal.NewFromInt(1099511627776)
 	maxPledgeStorageCapacity= decimal.NewFromInt(1099511627776).Mul(decimal.NewFromInt(80))
 	maxPledgeStorageCapacityV1= decimal.NewFromInt(1099511627776).Mul(decimal.NewFromInt(100))
+	maxPledgeStorageCapacityV2= decimal.NewFromInt(1099511627776).Mul(decimal.NewFromInt(1000))
 	proofTimeOut = big.NewInt(1800)  //second
 	storageBlockSize = "20"
 	maxBoundStorageSpace=new(big.Int).Mul(tb1b,big.NewInt(1048576))
@@ -783,6 +784,9 @@ func (a *Alien) declareStoragePledge(currStoragePledge []SPledgeRecord, txDataIn
 	maxPledgeCapacity:=maxPledgeStorageCapacity
 	if blocknumber.Uint64() >= StorageChBwEffectNumber{
 		maxPledgeCapacity=maxPledgeStorageCapacityV1
+	}
+	if blocknumber.Uint64() >= PosNewEffectNumber{
+		maxPledgeCapacity=maxPledgeStorageCapacityV2
 	}
 	if storageCapacity.Cmp(minPledgeStorageCapacity)<0 ||storageCapacity.Cmp(maxPledgeCapacity)>0{
 		log.Warn("Storage Pledge storageCapacity error", "storageCapacity",storageCapacity,"minPledgeStorageCapacity",minPledgeStorageCapacity,"maxPledgeStorageCapacity",maxPledgeStorageCapacity)

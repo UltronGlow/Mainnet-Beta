@@ -218,6 +218,11 @@ web3._extend({
 			call: 'alien_getSnapshotReleaseAtNumber2',
 			params: 4
 		}),
+        new web3._extend.Method({
+			name: 'getCandidateAutoExitAtNumber',
+			call: 'alien_getCandidateAutoExitAtNumber',
+			params: 1
+		}),
 	]
 });
 `

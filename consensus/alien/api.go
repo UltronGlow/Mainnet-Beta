@@ -219,6 +219,16 @@ func (api *API) GetSnapshotSignerAtNumber(number uint64) (*SnapshotSign, error) 
 		LoopStartTime:snapshot.LoopStartTime,
 		Signers: snapshot.Signers,
 		Punished: snapshot.Punished,
+		SignPledge:make(map[common.Address]*SignPledgeItem),
+	}
+	if isGEPOSNewEffect(number){
+		for miner,item:=range snapshot.PosPledge{
+			snapshotSign.SignPledge[miner]=&SignPledgeItem{
+				TotalAmount: new(big.Int).Set(item.TotalAmount),
+				LastPunish:item.LastPunish,
+				DisRate:new(big.Int).Set(item.DisRate),
+			}
+		}
 	}
 	return snapshotSign, err
 }
@@ -228,8 +238,13 @@ type SnapshotSign struct {
 	LoopStartTime   uint64                                              `json:"loopStartTime"`
 	Signers         []*common.Address                                   `json:"signers"`
 	Punished        map[common.Address]uint64                           `json:"punished"`
+	SignPledge      map[common.Address]*SignPledgeItem                  `json:"signpledge"`
 }
-
+type SignPledgeItem struct {
+	TotalAmount *big.Int                      `json:"totalamount"`
+	LastPunish  uint64                        `json:"lastpunish"`
+	DisRate     *big.Int                      `json:"distributerate"`
+}
 
 func (api *API) GetSnapshotReleaseAtNumber(number uint64,part string) (*SnapshotRelease, error) {
 	log.Info("api GetSnapshotReleaseAtNumber", "number", number)
@@ -264,7 +279,10 @@ func (api *API) GetSnapshotReleaseAtNumber(number uint64,part string) (*Snapshot
 			if snapshot.FlowRevenue.PosPgExitLock!=nil {
 				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.PosPgExitLock,api.alien.db)
 			}
-
+		}else if part =="posexit"{
+			if snapshot.FlowRevenue.PosExitLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.PosExitLock,api.alien.db)
+			}
 		}
 	}else{
 		snapshotRelease.CandidatePledge=snapshot.CandidatePledge
@@ -277,7 +295,9 @@ func (api *API) GetSnapshotReleaseAtNumber(number uint64,part string) (*Snapshot
 		if number >= PledgeRevertLockEffectNumber{
 			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.PosPgExitLock,api.alien.db)
 		}
-
+		if isGEPOSNewEffect(number){
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.PosExitLock,api.alien.db)
+		}
 	}
 	return snapshotRelease, err
 }
@@ -1112,7 +1132,10 @@ func (api *API) GetSnapshotReleaseAtNumber2(number uint64,part string,startLNum 
 			if snapshot.FlowRevenue.PosPgExitLock!=nil {
 				snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosPgExitLock,api.alien.db,startLNum,endLNum)
 			}
-
+		}else if part =="posexit"{
+			if snapshot.FlowRevenue.PosExitLock!=nil {
+				snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosExitLock,api.alien.db,startLNum,endLNum)
+			}
 		}
 	}else{
 		snapshotRelease.CandidatePledge=snapshot.CandidatePledge
@@ -1125,7 +1148,9 @@ func (api *API) GetSnapshotReleaseAtNumber2(number uint64,part string,startLNum 
 		if number >= PledgeRevertLockEffectNumber{
 			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosPgExitLock,api.alien.db,startLNum,endLNum)
 		}
-
+		if isGEPOSNewEffect(number){
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosExitLock,api.alien.db,startLNum,endLNum)
+		}
 	}
 	return snapshotRelease, err
 }
@@ -1197,4 +1222,29 @@ func inLNumScope(num uint64, startLNum uint64, endLNum uint64) bool {
 		return true
 	}
 	return false
+}
+
+type SnapCanAutoExit struct {
+	CandidateAutoExit  []common.Address `json:"candidateautoexit"`
+}
+
+func (api *API) GetCandidateAutoExitAtNumber(number uint64) (*SnapCanAutoExit, error) {
+	log.Info("api GetCandidateAutoExitAtNumber", "number", number)
+	header := api.chain.GetHeaderByNumber(number)
+	if header == nil {
+		return nil, errUnknownBlock
+	}
+	headerExtra := HeaderExtra{}
+	err := rlp.DecodeBytes(header.Extra[extraVanity:len(header.Extra)-extraSeal], &headerExtra)
+	if err != nil {
+		log.Info("Fail to decode header Extra", "err", err)
+		return nil,err
+	}
+	snapCanAutoExit:=&SnapCanAutoExit{
+		CandidateAutoExit:make([]common.Address,0),
+	}
+	if len(headerExtra.CandidateAutoExit)>0 {
+		snapCanAutoExit.CandidateAutoExit=append(snapCanAutoExit.CandidateAutoExit,headerExtra.CandidateAutoExit...)
+	}
+	return snapCanAutoExit, err
 }
