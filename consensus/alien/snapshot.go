@@ -1063,6 +1063,9 @@ func (s *Snapshot) apply(headers []*types.Header, db ethdb.Database) (*Snapshot,
 			}
 			snap.updateCandidateExit2(headerExtra.CandidateExit, header.Number)
 		}
+		if header.Number.Uint64()==PosLastPunishFixNumber{
+			snap.initPosExitPunishFix()
+		}
 	}
 	snap.Number += uint64(len(headers))
 	snap.Hash = headers[len(headers)-1].Hash()
@@ -2883,4 +2886,12 @@ func (snap *Snapshot) isPosMinerManager(target common.Address) bool {
 		}
 	}
 	return false
+}
+
+func (snap *Snapshot) initPosExitPunishFix() {
+	for _,item:=range snap.PosPledge{
+		if item.LastPunish>0&&item.LastPunish<(PosNewEffectNumber-1){
+			item.LastPunish=PosNewEffectNumber-1
+		}
+	}
 }

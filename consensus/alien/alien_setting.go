@@ -61,6 +61,7 @@ const (
 	PosNewEffectNumber= 2558551
 	payPOSExitInterval = 1 * 60 * 60 + 50*60  //  pay bandwidth reward  interval every day
 	checkPOSAutoExit= 1 * 60 * 60 + 60*60
+	PosLastPunishFixNumber= 2566675
 )
 
 var (
