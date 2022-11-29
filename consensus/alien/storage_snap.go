@@ -89,6 +89,7 @@ var (
 	storageRentPriceRatio=big.NewInt(400)//0.04*10000
 	storageRentAdjRatio=big.NewInt(8000)//0.8*10000
 	storagePledgefactor=decimal.NewFromFloat(0.4)
+	rentLeftSpace=new(big.Int).Mul(gbTob,big.NewInt(5))
 )
 
 type StorageData struct {
@@ -376,9 +377,17 @@ func (s *StorageData) checkSRent(sRent []LeaseRequestRecord, rent LeaseRequestRe
 		}
 	}
 	storageSpaces := s.StoragePledge[rent.Address].StorageSpaces
-	if storageSpaces.StorageCapacity.Cmp(rentCapacity) < 0 {
-		log.Info("checkSRent", "rentCapacity is greater than storageSpaces", rentCapacity)
-		return false
+	if isGEPosAutoExitPunishChange(number){
+		rentCapacity=new(big.Int).Add(rentCapacity,rentLeftSpace)
+		if storageSpaces.StorageCapacity.Cmp(rentCapacity) < 0 {
+			log.Info("checkSRent", "rentCapacity add rentLeftSpace is greater than storageSpaces", rentCapacity)
+			return false
+		}
+	}else{
+		if storageSpaces.StorageCapacity.Cmp(rentCapacity) < 0 {
+			log.Info("checkSRent", "rentCapacity is greater than storageSpaces", rentCapacity)
+			return false
+		}
 	}
 	if number>=StoragePledgeOptEffectNumber{
 		price := s.StoragePledge[rent.Address].Price
@@ -457,6 +466,12 @@ func (s *StorageData) checkSRentPg(currentSRentPg []LeasePledgeRecord, sRentPg L
 	if leftCapacity.Cmp(common.Big0) < 0 { //can be 0
 		log.Info("checkSRentPg", "LeftCapacity is less than 0", leftCapacity)
 		return nil, nil, nil, nilHash, false
+	}
+	if isGEPosAutoExitPunishChange(number){
+		if leftCapacity.Cmp(rentLeftSpace)<0{
+			log.Warn("checkSRentPg", "LeftCapacity less rentLeftSpace", sRentPg.Capacity)
+			return nil, nil, nil, nilHash, false
+		}
 	}
 	if leftCapacity.Cmp(sRentPg.LeftCapacity) != 0 {
 		log.Info("checkSRentPg", "LeftCapacity is not equal", sRentPg.LeftCapacity)
@@ -1256,7 +1271,7 @@ func (a *Alien) processLeasePledge(currentSRentPg []LeasePledgeRecord, txDataInf
 		return currentSRentPg
 	}
 	postion++
-	if rootHash, ok := snap.StorageData.verifyParamsStoragePoc(txDataInfo, postion, chain); !ok {
+	if rootHash, ok := snap.StorageData.verifyParamsStoragePoc(txDataInfo, postion, chain,number); !ok {
 		log.Warn("sRentPg verify fail", " RootHash1", rootHash)
 		return currentSRentPg
 	} else {
@@ -1273,9 +1288,15 @@ func (a *Alien) processLeasePledge(currentSRentPg []LeasePledgeRecord, txDataInf
 		log.Warn("sRentPg LeftCapacity less 0", " LeftCapacity", sRentPg.LeftCapacity)
 		return currentSRentPg
 	}
+	if isGEPosAutoExitPunishChange(number){
+		if sRentPg.LeftCapacity.Cmp(rentLeftSpace)<0{
+			log.Warn("sRentPg LeftCapacity less rentLeftSpace", " LeftCapacity", sRentPg.LeftCapacity)
+			return currentSRentPg
+		}
+	}
 	if sRentPg.LeftCapacity.Cmp(common.Big0)!=0{
 		postion++
-		if rootHash, ok := snap.StorageData.verifyParamsStoragePoc(txDataInfo, postion, chain); !ok {
+		if rootHash, ok := snap.StorageData.verifyParamsStoragePoc(txDataInfo, postion, chain,number); !ok {
 			log.Warn("sRentPg verify fail", " RootHash2", rootHash)
 			return currentSRentPg
 		} else {
@@ -1405,7 +1426,7 @@ func (a *Alien) processLeaseRenewalPledge(currentSRentReNewPg []LeaseRenewalPled
 		return currentSRentReNewPg
 	}
 	postion++
-	if rootHash, ok := snap.StorageData.verifyParamsStoragePoc(txDataInfo, postion, chain); !ok {
+	if rootHash, ok := snap.StorageData.verifyParamsStoragePoc(txDataInfo, postion, chain,number); !ok {
 		log.Warn("sRentReNewPg verify fail", " RootHash", rootHash)
 		return currentSRentReNewPg
 	} else {
@@ -1676,6 +1697,7 @@ func (a *Alien) storageRecoveryCertificate(storageRecoveryData []SPledgeRecovery
 		log.Warn("storage  Recovery Certificate  There are leases that have not expired ", " leaseHash", txDataInfo[4])
 		return storageRecoveryData
 	}
+	storageCapacity:=decimal.Zero // new(big.Int).Add(storagepledge.TotalCapacity,totalReCapacity.BigInt())
 	validData := txDataInfo[5]
 	verifyType :=""
 	if blocknumber.Uint64() >= storageVerifyNewEffectNumber {
@@ -1689,6 +1711,8 @@ func (a *Alien) storageRecoveryCertificate(storageRecoveryData []SPledgeRecovery
 		log.Warn("verifyStoragePoc", "invalide poc string format")
 		return storageRecoveryData
 	}
+	rootHash := verifydatas[len(verifydatas)-1]
+	if isLtPosAutoExitPunishChange(blocknumber.Uint64()){
 	blockSize, err := decimal.NewFromString(verifydatas[4])
 	if err !=nil||blockSize.Cmp(decimal.Zero)<=0{
 		log.Warn("applyStorageProof blocksize err ", "blockSize", blockSize,"set storageBlockSize",storageBlockSize)
@@ -1699,7 +1723,7 @@ func (a *Alien) storageRecoveryCertificate(storageRecoveryData []SPledgeRecovery
 		log.Warn("applyStorageProof blockNum err ", "blockNum", blockNum)
 		return storageRecoveryData
 	}
-	storageCapacity:=blockSize.Mul(blockNum)
+	storageCapacity=blockSize.Mul(blockNum)
 	if storageCapacity.Cmp(decimal.Zero)<=0{
 		log.Warn("applyStorageProof storageCapacity err ", "storageCapacity", storageCapacity)
 		return storageRecoveryData
@@ -1713,7 +1737,7 @@ func (a *Alien) storageRecoveryCertificate(storageRecoveryData []SPledgeRecovery
 		log.Warn("storage  Recovery storageCapacity is error", " storageCapacity", txDataInfo[5])
 		return storageRecoveryData
 	}
-	rootHash := verifydatas[len(verifydatas)-1]
+
 	verifyHeader := chain.GetHeaderByHash(common.HexToHash(verifydatas[2]))
 	if verifyHeader == nil || verifyHeader.Number.String() != verifydatas[0] || strconv.FormatInt(int64(verifyHeader.Nonce.Uint64()), 10) != verifydatas[1] {
 		log.Warn("storageRecoveryCertificate  GetHeaderByHash not find by hash  ", "verifydatas", verifydatas)
@@ -1732,6 +1756,15 @@ func (a *Alien) storageRecoveryCertificate(storageRecoveryData []SPledgeRecovery
 	}
 
 
+	}else{
+		verifyHeader := chain.GetHeaderByHash(common.HexToHash(verifydatas[2]))
+		if verifyHeader == nil || verifyHeader.Number.String() != verifydatas[0] || strconv.FormatInt(int64(verifyHeader.Nonce.Uint64()), 10) != verifydatas[1] {
+			log.Warn("storageRecoveryCertificate  GetHeaderByHash not find by hash  ", "verifydatas", verifydatas)
+			return storageRecoveryData
+		}
+		//
+		storageCapacity=totalReCapacity.Add(decimal.NewFromBigInt(storagepledge.StorageSpaces.StorageCapacity,0))// new(big.Int).Add(storagepledge.TotalCapacity,totalReCapacity.BigInt())
+	}
 
 
 	storageRecoveryData = append(storageRecoveryData, SPledgeRecoveryRecord{
@@ -1949,6 +1982,12 @@ func  (a *Alien)   StorageProofNew(storageProofRecord []StorageProofRecord,verif
 				log.Warn("Storage Proof not find leaseHash", " leaseHash", leaseHash)
 				continue
 			}else{
+				if isGEPosAutoExitPunishChange(currNumber.Uint64()){
+					if lease.Status!=LeaseNormal&&lease.Status!=LeaseBreach {
+						log.Warn("lease  not pledge or breach", " leaseHash", leaseHash)
+						continue
+					}
+				}
 				capacity=lease.Capacity
 				rootHash=lease.RootHash
 			}
@@ -1983,7 +2022,8 @@ func  (a *Alien)   StorageProofNew(storageProofRecord []StorageProofRecord,verif
 			log.Warn("applyStorageProof blockNum err ", "blockNum", blockNum)
 			continue
 		}
-		verifyCapacity:=blockSize.Mul(blockNum)
+		if isLtPosAutoExitPunishChange(currNumber.Uint64()){
+			verifyCapacity:=blockSize.Mul(blockNum)
 		if verifyCapacity.Cmp(decimal.NewFromBigInt(capacity,0))!=0 {
 			log.Warn("applyStorageProof capacity not same ", "verifyCapacity", verifyCapacity,"snap capacity",capacity)
 			continue
@@ -2000,7 +2040,7 @@ func  (a *Alien)   StorageProofNew(storageProofRecord []StorageProofRecord,verif
 				continue
 			}
 		}
-
+		}
 		if index ==0 {
 			verifyResult=append(verifyResult, changeOxToUx(pledgeAddr.String())+":1")
 		}else{
@@ -3386,7 +3426,7 @@ func (s *StorageData) saveStorageRatiosTodb(ratios map[common.Address]*StorageRa
 	return nil
 }
 
-func (s *StorageData) verifyParamsStoragePoc(txDataInfo []string, postion int,chain consensus.ChainHeaderReader) (common.Hash, bool) {
+func (s *StorageData) verifyParamsStoragePoc(txDataInfo []string, postion int,chain consensus.ChainHeaderReader, number uint64) (common.Hash, bool) {
 	verifyType :=""
 	verifyData := txDataInfo[postion]
 
@@ -3404,22 +3444,20 @@ func (s *StorageData) verifyParamsStoragePoc(txDataInfo []string, postion int,ch
 		log.Warn("verifyParamsStoragePoc  GetHeaderByHash not find by hash  ", "poc", pocs)
 		return common.Hash{}, false
 	}
-
-	if verifyType =="v1" {
-		verifyDataArr := strings.Split(verifyData, ",")
-		RootHash := verifyDataArr[len(verifyDataArr)-1]
-		if !verifyStoragePocV1(txDataInfo[postion], RootHash,verifyHeader.Nonce.Uint64() ) {
-			return common.Hash{}, false
+	verifyDataArr := strings.Split(verifyData, ",")
+	RootHash := verifyDataArr[len(verifyDataArr)-1]
+	if isLtPosAutoExitPunishChange(number){
+		if verifyType =="v1" {
+			if !verifyStoragePocV1(txDataInfo[postion], RootHash,verifyHeader.Nonce.Uint64() ) {
+				return common.Hash{}, false
+			}
+		}else{
+			if !verifyStoragePoc(verifyData, RootHash, verifyHeader.Nonce.Uint64()) {
+				return common.Hash{}, false
+			}
 		}
-		return common.HexToHash(RootHash), true
-	}else{
-		verifyDataArr := strings.Split(verifyData, ",")
-		RootHash := verifyDataArr[len(verifyDataArr)-1]
-		if !verifyStoragePoc(verifyData, RootHash, verifyHeader.Nonce.Uint64() ) {
-			return common.Hash{}, false
-		}
-		return common.HexToHash(RootHash), true
 	}
+	return common.HexToHash(RootHash), true
 }
 func (s *Snapshot) updateExchangeSRT(exchangeSRT []ExchangeSRTRecord, headerNumber *big.Int, db ethdb.Database) {
 	if s.SRT!=nil{

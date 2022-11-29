@@ -1376,11 +1376,13 @@ func (s *LockData) setRewardRemovePunish(pledge []common.Address, db ethdb.Datab
 				}
 			}
 		}else{
-			for _,itemBlockLock:=range lockBalance{
-				for _,itemWhichLock:=range itemBlockLock{
-					if _, ok2 := pledgeAddrs[itemWhichLock.RevenueContract]; ok2 {
-						hasChanged=true
-						s.setBurnRatio(itemWhichLock,burnRatio)
+			if isLtPosAutoExitPunishChange(number){
+				for _,itemBlockLock:=range lockBalance{
+					for _,itemWhichLock:=range itemBlockLock{
+						if _, ok2 := pledgeAddrs[itemWhichLock.RevenueContract]; ok2 {
+							hasChanged=true
+							s.setBurnRatio(itemWhichLock,burnRatio)
+						}
 					}
 				}
 			}

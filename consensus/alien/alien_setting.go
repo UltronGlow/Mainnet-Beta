@@ -62,6 +62,7 @@ const (
 	payPOSExitInterval = 1 * 60 * 60 + 50*60  //  pay bandwidth reward  interval every day
 	checkPOSAutoExit= 1 * 60 * 60 + 60*60
 	PosLastPunishFixNumber= 2566675
+	PosAutoExitPunishChangeNumber=2755395
 )
 
 var (
@@ -197,4 +198,12 @@ func isGTPOSRNewCalEffect(number uint64) bool{
 }
 func isGEPOSNewEffect(number uint64) bool{
 	return number >=PosNewEffectNumber
+}
+
+func isLtPosAutoExitPunishChange(number uint64) bool{
+	return number <PosAutoExitPunishChangeNumber
+}
+
+func isGEPosAutoExitPunishChange(number uint64) bool{
+	return number >=PosAutoExitPunishChangeNumber
 }
