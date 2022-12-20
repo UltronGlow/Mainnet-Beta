@@ -2645,6 +2645,9 @@ func (snap *Snapshot) checkCandidateAutoExit(number uint64, candidateAutoExit []
 	return candidateAutoExit, candidatePEntrustExit
 }
 func (snap *Snapshot) updateCandidateAutoExit(candidateAutoExit []common.Address, header *types.Header, db ethdb.Database) {
+	if candidateAutoExit==nil ||len(candidateAutoExit)==0 {
+		return
+	}
 	for _, miner := range candidateAutoExit {
 		snap.removePosPledge(miner)
 		snap.removeTally(miner)
@@ -2873,6 +2876,9 @@ func (snap *Snapshot) isSystemManagerAndInTally(txSender common.Address,minerAdd
 }
 
 func (snap *Snapshot) updateCandidateExit2(candidateExit []common.Address, number *big.Int) {
+	if candidateExit==nil || len(candidateExit)==0 {
+		return
+	}
 	for _, miner := range candidateExit {
 		snap.removePosPledge(miner)
 		snap.removeTally(miner)
