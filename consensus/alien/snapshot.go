@@ -982,8 +982,6 @@ func (s *Snapshot) apply(headers []*types.Header, db ethdb.Database) (*Snapshot,
 		snap.updateFlowMiner(header, db)
 		snap.updateMinerStack(headerExtra.MinerStake,header.Number.Uint64())
 
-		snap.compareGrantProfitHash(headerExtra.GrantProfit,db,header)
-
 		if header.Number.Uint64() <PosrIncentiveEffectNumber{
 			snap.updateGrantProfit(headerExtra.GrantProfit, db,header.Hash(),header.Number.Uint64())
 		}else{
@@ -2530,23 +2528,6 @@ func (s *Snapshot) calPayProfit(db ethdb.Database,header *types.Header) ([]conse
 		}
 	}
 	return playGrantProfit, nil
-}
-
-func (s *Snapshot) compareGrantProfitHash(GrantProfit []consensus.GrantProfitRecord, db ethdb.Database, header *types.Header) {
-	if CompareGrantProfitHash {
-		number:=header.Number.Uint64()
-		calGrantProfitHash1:=s.calGrantProfitHash(GrantProfit)
-		calGrantProfit,calErr := s.calPayProfit(db, header)
-		if calErr!=nil{
-			log.Error("cal GrantProfit","err" ,calErr,"number",number)
-		}
-		calGrantProfitHash2:=s.calGrantProfitHash(calGrantProfit)
-		if calGrantProfitHash1!=calGrantProfitHash2{
-			log.Error("grantProfitHash is not same","head" , calGrantProfitHash1 , "cal", calGrantProfitHash2,"number",number)
-		}else{
-			log.Info("grantProfitHash is same","head" , calGrantProfitHash1 , "cal", calGrantProfitHash2,"number",number)
-		}
-	}
 }
 
 func (snap *Snapshot) updateGrantProfit2(grantProfitHash common.Hash, db ethdb.Database, header *types.Header)(error) {

@@ -46,7 +46,7 @@ const (
 
 	SPledgeRevertFixBlockNumber=894333
 	AdjustSPRBlockNumber=974868 //Adjust calc StoragePledgeReward
-	CompareGrantProfitHash=false
+
 	storageVerifyNewEffectNumber = 1073447
 	storagePledgeTmpVerifyEffectNumber = 1103667
 	StorageChBwEffectNumber = 1170700

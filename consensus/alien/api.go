@@ -22,7 +22,6 @@ import (
 	"container/list"
 	"github.com/UltronGlow/UltronGlow-Origin/common"
 	"github.com/UltronGlow/UltronGlow-Origin/consensus"
-	"github.com/UltronGlow/UltronGlow-Origin/consensus/alien/extrastate"
 	"github.com/UltronGlow/UltronGlow-Origin/core/types"
 	"github.com/UltronGlow/UltronGlow-Origin/ethdb"
 	"github.com/UltronGlow/UltronGlow-Origin/log"
@@ -721,32 +720,6 @@ func (api *API) GetRevertSRTAtNumber(number uint64) (*SnapshotRevertSRT, error) 
 		RevertSRT:revertSRT,
 	}
 	return snapshotRevertSRT,nil
-}
-
-func (api *API) GetPaysAtNumber(number uint64) (*SnapshotPay) {
-	log.Info("api GetPaysAtNumber", "number", number)
-	snapshotPay := &SnapshotPay{
-		Pays:make([]PayRecard2,0),
-	}
-	payRecards:=extrastate.LoadPayRecords(number)
-	if payRecards!=nil&&len(payRecards)>0{
-		for _,pay:=range payRecards{
-			snapshotPay.Pays=append(snapshotPay.Pays,PayRecard2{
-				Address:pay.Address,
-				Amount:pay.Amount,
-			})
-		}
-	}
-	return snapshotPay
-}
-
-type SnapshotPay struct {
-	Pays []PayRecard2 `json:"pays"`
-}
-
-type PayRecard2 struct {
-	Address common.Address `json:"address"`
-	Amount  *big.Int `json:"amount"`
 }
 
 type SnapshotAddrSRT struct {

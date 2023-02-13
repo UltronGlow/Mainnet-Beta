@@ -22,7 +22,6 @@ import (
 	"container/list"
 	"errors"
 	"fmt"
-	"github.com/UltronGlow/UltronGlow-Origin/consensus/alien/extrastate"
 	"io"
 	"math"
 	"math/big"
@@ -251,7 +250,6 @@ func New(config *params.AlienConfig, db ethdb.Database) *Alien {
 	if conf.MinVoterBalance.Uint64() > 0 {
 		minVoterBalance = conf.MinVoterBalance
 	}
-	extrastate.InitExtraDB("")
 	// Allocate the snapshot caches and create the engine
 	recents, _ := lru.NewARC(inMemorySnapshots)
 	signatures, _ := lru.NewARC(inMemorySignatures)
