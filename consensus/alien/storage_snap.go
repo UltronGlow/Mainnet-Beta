@@ -3131,6 +3131,9 @@ func (s *StorageData) calcStoragePledgeReward(ratios map[common.Address]*Storage
 }
 
 func (s *StorageData) calcStoragePledgeReward2(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+	if isGEGrantEffectNumber(number) {
+		return s.calcStoragePledgeReward3(ratios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db)
+	}
 	reward := make([]SpaceRewardRecord, 0)
 	storageHarvest := big.NewInt(0)
 	leftAmount:=common.Big0
@@ -4365,4 +4368,78 @@ func getZeroTime(bigNumber *big.Int, blockPerDay uint64) *big.Int {
 
 func changeOxToUx(str string) string {
 	return "ux"+str[2:]
+}
+
+func (s *StorageData) calcStoragePledgeReward3(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+	reward := make([]SpaceRewardRecord, 0)
+	storageHarvest := big.NewInt(0)
+	leftAmount:=common.Big0
+	validSuccSPAddrs := make(map[common.Address]uint64)
+	for _, sPAddrs := range sussSPAddrs {
+		validSuccSPAddrs[sPAddrs] = 1
+	}
+	for pledgeAddr, sPledge := range s.StoragePledge {
+		if _, ok := validSuccSPAddrs[pledgeAddr]; !ok {
+			continue
+		}
+		if revenue, ok := revenueStorage[pledgeAddr]; ok {
+				if capSucc, ok3 := capSuccAddrs[pledgeAddr]; ok3 {
+					if capSucc.Cmp(common.Big0)>0{
+						if s.isSPledgeIncentivePeriod(sPledge.Number,number, period){
+							if s.isSPledgeFrontIncentivePeriod(sPledge.Number,number, period)||s.isSPledgeRentalThreshold(sPledge){
+								apr := getApr(sPledge.Number, period)
+								pledgeReward := decimal.NewFromBigInt(sPledge.SpaceDeposit, 0).Mul(apr).Div(decimal.NewFromInt(365))
+								pledgeRewardBigInt:=pledgeReward.BigInt()
+								if pledgeRewardBigInt.Cmp(common.Big0)>0{
+									reward = append(reward, SpaceRewardRecord{
+										Target:  pledgeAddr,
+										Amount:  pledgeRewardBigInt,
+										Revenue: revenue.RevenueAddress,
+									})
+									storageHarvest = new(big.Int).Add(storageHarvest, pledgeRewardBigInt)
+								}
+							}
+						}
+					}
+				}
+			}
+
+	}
+	return reward, storageHarvest,leftAmount
+}
+
+func (s *StorageData) isSPledgeIncentivePeriod(sPledgeNumber *big.Int, number uint64, period uint64) bool {
+	blockNumPerYear := secondsPerYear / period
+	return number-sPledgeNumber.Uint64()<=blockNumPerYear
+}
+
+func (s *StorageData) isSPledgeFrontIncentivePeriod(sPledgeNumber *big.Int, number uint64, period uint64) bool {
+	blockNumPerDay := secondsPerDay / period
+	return number-sPledgeNumber.Uint64()<=30*blockNumPerDay
+}
+
+func getApr(sPledgeNumber *big.Int,period uint64) decimal.Decimal {
+	blockNumPerYear := secondsPerYear / period
+	yearCount := (sPledgeNumber.Uint64()-StorageEffectBlockNumber) / blockNumPerYear
+	yearCount++
+	apr:=decimal.NewFromFloat(float64(0.15))
+	if yearCount > 1 {
+		decimalN:=decimal.NewFromBigInt(new(big.Int).SetUint64(yearCount-1),0)
+		yearScale, _ := decimal.NewFromString("0.85") //1-0.15
+		apr = apr.Mul(yearScale.Pow(decimalN))
+	}
+    return apr.Truncate(6)
+}
+
+func (s *StorageData) isSPledgeRentalThreshold(sPledge *SPledge) bool {
+	rentSpace:=common.Big0
+	for _, l := range sPledge.Lease {
+		if l.Status == LeaseNormal || l.Status == LeaseBreach {
+			rentSpace=new(big.Int).Add(rentSpace,l.Capacity)
+		}
+	}
+	totalCapacity:=new(big.Int).Set(sPledge.TotalCapacity)
+	thresholdSpace:=new(big.Int).Mul(totalCapacity,big.NewInt(50))
+	thresholdSpace=new(big.Int).Div(thresholdSpace,big.NewInt(100))
+	return rentSpace.Cmp(common.Big0)>0&&rentSpace.Cmp(thresholdSpace)>=0
 }

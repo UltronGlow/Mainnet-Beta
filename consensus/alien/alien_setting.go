@@ -63,6 +63,7 @@ const (
 	checkPOSAutoExit= 1 * 60 * 60 + 60*60
 	PosLastPunishFixNumber= 2566675
 	PosAutoExitPunishChangeNumber=2755395
+	GrantEffectNumber             =3713619
 )
 
 var (
@@ -206,4 +207,12 @@ func isLtPosAutoExitPunishChange(number uint64) bool{
 
 func isGEPosAutoExitPunishChange(number uint64) bool{
 	return number >=PosAutoExitPunishChangeNumber
+}
+
+func isLtGrantEffectNumber(number uint64) bool{
+	return number < GrantEffectNumber
+}
+
+func isGEGrantEffectNumber(number uint64) bool{
+	return number >= GrantEffectNumber
 }

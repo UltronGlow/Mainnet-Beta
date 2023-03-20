@@ -816,7 +816,11 @@ func (s *LockProfitSnap) updateLockData(snap *Snapshot, LockReward []LockRewardR
 			if headerNumber.Uint64() < PosrIncentiveEffectNumber {
 				s.BandwidthLock.updateLockData(snap, item, headerNumber)
 			}else{
-				s.BandwidthLock.makePolicyLockData(snap, item, headerNumber)
+				if isLtGrantEffectNumber(headerNumber.Uint64()) {
+					s.BandwidthLock.makePolicyLockData(snap, item, headerNumber)
+				}else{
+					s.BandwidthLock.updateLockData(snap, item, headerNumber)
+				}
 			}
 
 		}else if sscEnumStoragePledgeRedeemLock == item.IsReward {

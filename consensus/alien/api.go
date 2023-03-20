@@ -20,6 +20,7 @@ package alien
 
 import (
 	"container/list"
+	"errors"
 	"github.com/UltronGlow/UltronGlow-Origin/common"
 	"github.com/UltronGlow/UltronGlow-Origin/consensus"
 	"github.com/UltronGlow/UltronGlow-Origin/core/types"
@@ -32,6 +33,10 @@ import (
 	"sync"
 )
 
+
+var (
+	errNumberTooSmall = errors.New("block number too small")
+)
 
 // API is a user facing RPC API to allow controlling the signer and voting
 // mechanisms of the delegated-proof-of-stake scheme.
@@ -62,6 +67,7 @@ func (api *API) GetSnapshot(number *rpc.BlockNumber) (*Snapshot, error) {
 	if header == nil {
 		return nil, errUnknownBlock
 	}
+
 	return api.getSnapshotCache(header)
 }
 
@@ -85,124 +91,6 @@ func (api *API) GetSnapshotAtNumber(number uint64) (*Snapshot, error) {
 	return api.getSnapshotCache(header)
 }
 
-// GetSnapshotByHeaderTime retrieves the state snapshot by timestamp of header.
-// snapshot.header.time <= targetTime < snapshot.header.time + period
-// todo: add confirm headertime in return snapshot, to minimize the request from side chain
-func (api *API) GetSnapshotByHeaderTime(targetTime uint64, scHash common.Hash) (*Snapshot, error) {
-	log.Info("api GetSnapshotByHeaderTime", "targetTime", targetTime,"scHash",scHash)
-	header := api.chain.CurrentHeader()
-	if header == nil {
-		return nil, errUnknownBlock
-	}
-	period := new(big.Int).SetUint64(api.chain.Config().Alien.Period)
-	target := new(big.Int).SetUint64(targetTime)
-	ceil := new(big.Int).Add(new(big.Int).SetUint64(header.Time), period)
-	if target.Cmp(ceil) > 0 {
-		target = new(big.Int).SetUint64(header.Time)
-	}
-
-	minN := new(big.Int).SetUint64(api.chain.Config().Alien.MaxSignerCount)
-	maxN := new(big.Int).Set(header.Number)
-	nextN := new(big.Int).SetInt64(0)
-	isNext := false
-	for {
-		ceil = new(big.Int).Add(new(big.Int).SetUint64(header.Time), period)
-		if target.Cmp(new(big.Int).SetUint64(header.Time)) >= 0 && target.Cmp(ceil) < 0 {
-			snap, err := api.getSnapshotCache(header)
-
-			var scSigners    []*common.Address
-			for signer, _ := range snap.SCCoinbase[scHash] {
-				scSigners = append(scSigners, &signer)
-			}
-			mcs := Snapshot{
-				LoopStartTime: snap.LoopStartTime,
-				Period: snap.Period,
-				Signers: scSigners,
-				Number: snap.Number,
-				SCFULBalance: make(map[common.Address]*big.Int),
-				SCMinerRevenue: make(map[common.Address]common.Address),
-				SCFlowPledge: make(map[common.Address]bool),
-			}
-			for address, item := range snap.FULBalance {
-				balance := new(big.Int).Set(item.Balance)
-				for sc, cost := range item.CostTotal {
-					if sc.String() == scHash.String() {
-						continue
-					}
-					balance = new(big.Int).Sub(balance,cost)
-					if 0 >= balance.Cmp(big.NewInt(0)) {
-						break
-					}
-				}
-				mcs.SCFULBalance[address] = balance
-			}
-			for address, revenue := range snap.RevenueFlow {
-				mcs.SCMinerRevenue[address] = revenue.RevenueAddress
-			}
-			for address, pledge := range snap.FlowPledge {
-				if 0 == pledge.StartHigh {
-					mcs.SCFlowPledge[address] = true
-				}
-			}
-			if _, ok := snap.SCNoticeMap[scHash]; ok {
-				mcs.SCNoticeMap = make(map[common.Hash]*CCNotice)
-				mcs.SCNoticeMap[scHash] = snap.SCNoticeMap[scHash]
-			}
-			return &mcs, err
-		} else {
-			if minNext := new(big.Int).Add(minN, big.NewInt(1)); maxN.Cmp(minN) == 0 || maxN.Cmp(minNext) == 0 {
-				if !isNext && maxN.Cmp(minNext) == 0 {
-					var maxHeaderTime, minHeaderTime *big.Int
-					maxH := api.chain.GetHeaderByNumber(maxN.Uint64())
-					if maxH != nil {
-						maxHeaderTime = new(big.Int).SetUint64(maxH.Time)
-					} else {
-						break
-					}
-					minH := api.chain.GetHeaderByNumber(minN.Uint64())
-					if minH != nil {
-						minHeaderTime = new(big.Int).SetUint64(minH.Time)
-					} else {
-						break
-					}
-					period = period.Sub(maxHeaderTime, minHeaderTime)
-					isNext = true
-				} else {
-					break
-				}
-			}
-			// calculate next number
-			nextN.Sub(target, new(big.Int).SetUint64(header.Time))
-			nextN.Div(nextN, period)
-			nextN.Add(nextN, header.Number)
-
-			// if nextN beyond the [minN,maxN] then set nextN = (min+max)/2
-			if nextN.Cmp(maxN) >= 0 || nextN.Cmp(minN) <= 0 {
-				nextN.Add(maxN, minN)
-				nextN.Div(nextN, big.NewInt(2))
-			}
-			// get new header
-			header = api.chain.GetHeaderByNumber(nextN.Uint64())
-			if header == nil {
-				break
-			}
-			// update maxN & minN
-			if new(big.Int).SetUint64(header.Time).Cmp(target) >= 0 {
-				if header.Number.Cmp(maxN) < 0 {
-					maxN.Set(header.Number)
-				}
-			} else if new(big.Int).SetUint64(header.Time).Cmp(target) <= 0 {
-				if header.Number.Cmp(minN) > 0 {
-					minN.Set(header.Number)
-				}
-			}
-
-		}
-	}
-	return nil, errUnknownBlock
-}
-
-//y add method
 func (api *API) GetSnapshotSignerAtNumber(number uint64) (*SnapshotSign, error) {
 	log.Info("api GetSnapshotSignerAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
