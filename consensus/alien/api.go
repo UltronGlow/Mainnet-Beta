@@ -1109,3 +1109,25 @@ func (api *API) GetCandidateAutoExitAtNumber(number uint64) (*SnapCanAutoExit, e
 	}
 	return snapCanAutoExit, err
 }
+
+
+type SnapshotTLS struct {
+	TotalLeaseSpace  *big.Int   `json:"totalleasespace"`
+}
+//totalleasespace
+func (api *API) GetSnapshotTLSAtNumber(number uint64) (*SnapshotTLS, error) {
+	log.Info("api GetSnapshotTLSAtNumber", "number", number)
+	header := api.chain.GetHeaderByNumber(number)
+	if header == nil {
+		return nil, errUnknownBlock
+	}
+	snapshot,err:= api.getSnapshotCache(header)
+	if err != nil {
+		log.Warn("Fail to GetSnapshotTLSAtNumber", "err", err)
+		return nil, errUnknownBlock
+	}
+	snapshotTLS := &SnapshotTLS{
+		TotalLeaseSpace:new(big.Int).Set(snapshot.TotalLeaseSpace),
+	}
+	return snapshotTLS, err
+}

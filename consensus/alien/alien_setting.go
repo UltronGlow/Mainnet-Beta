@@ -64,6 +64,7 @@ const (
 	PosLastPunishFixNumber= 2566675
 	PosAutoExitPunishChangeNumber=2755395
 	GrantEffectNumber             =3713619
+	PoCrsAccCalNumber=3946692
 )
 
 var (
@@ -215,4 +216,8 @@ func isLtGrantEffectNumber(number uint64) bool{
 
 func isGEGrantEffectNumber(number uint64) bool{
 	return number >= GrantEffectNumber
+}
+
+func isGEPoCrsAccCalNumber(number uint64) bool{
+	return number >= PoCrsAccCalNumber
 }

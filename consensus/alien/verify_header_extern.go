@@ -140,7 +140,7 @@ func verifyHeaderExtern(currentExtra *HeaderExtra, verifyExtra *HeaderExtra) err
 		return err
 	}
 	//FlowHarvest               *big.Int
-	err = verifyFlowHarvest(currentExtra.FlowHarvest, verifyExtra.FlowHarvest)
+	err = verifyBigInt(currentExtra.FlowHarvest, verifyExtra.FlowHarvest,"FlowHarvest")
 	if err != nil {
 		return err
 	}
@@ -259,6 +259,13 @@ func verifyHeaderExtern(currentExtra *HeaderExtra, verifyExtra *HeaderExtra) err
 	if err != nil {
 		return err
 	}
+
+	//CurLeaseSpace               *big.Int
+	err = verifyBigInt(currentExtra.CurLeaseSpace, verifyExtra.CurLeaseSpace,"CurLeaseSpace")
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -764,8 +771,7 @@ func compareManagerAddress(a []ManagerAddressRecord, b []ManagerAddressRecord) e
 	return nil
 }
 
-func verifyFlowHarvest(current *big.Int, verify *big.Int) error {
-	fh_s := "FlowHarvest"
+func verifyBigInt(current *big.Int, verify *big.Int,fh_s string) error {
 	if current == nil && verify == nil {
 		return nil
 	}

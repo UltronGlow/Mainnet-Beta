@@ -223,6 +223,11 @@ web3._extend({
 			call: 'alien_getCandidateAutoExitAtNumber',
 			params: 1
 		}),
+        new web3._extend.Method({
+			name: 'getSnapshotTLSAtNumber',
+			call: 'alien_getSnapshotTLSAtNumber',
+			params: 1
+		}),
 	]
 });
 `

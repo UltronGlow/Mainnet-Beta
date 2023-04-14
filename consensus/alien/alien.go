@@ -705,45 +705,6 @@ func (a *Alien) verifySeal(chain consensus.ChainHeaderReader, state *state.State
 	return nil
 }
 
-func (a *Alien) VerifyLockReward(header *types.Header, snap *Snapshot, chain consensus.ChainHeaderReader, currentHeaderExtra HeaderExtra) error {
-	lockRewards := []LockRewardRecord{}
-	if a.isAccumulateFlowRewards(header.Number.Uint64()) {
-		lockRewards, _ = accumulateFlowRewards(lockRewards, snap, a.db)
-	} else if a.isAccumulateBandWidthRewards(header.Number.Uint64()) {
-		lockRewards, _ = accumulateBandwidthRewards(lockRewards, chain.Config(), header, snap, a.db)
-	}
-	// TODO accumulateRewards
-	//lockRewards = accumulateRewards(lockRewards, chain.Config(), header, snap)
-	if len(currentHeaderExtra.LockReward) != len(lockRewards) {
-		return errors.New("invalid lock reward")
-	}
-	for _, v1 := range lockRewards {
-		find := false
-		for _, v2 := range currentHeaderExtra.LockReward {
-			if v1.Amount.Cmp(v2.Amount) == 0 && v1.FlowValue1 == v2.FlowValue1 && v1.FlowValue2 == v2.FlowValue2 && v1.IsReward == v2.IsReward && v1.Target == v2.Target {
-				find = true
-				break
-			}
-		}
-		if !find {
-			return errors.New("invalid lock reward")
-		}
-	}
-	for _, v1 := range currentHeaderExtra.LockReward {
-		find := false
-		for _, v2 := range lockRewards {
-			if v1.Amount.Cmp(v2.Amount) == 0 && v1.FlowValue1 == v2.FlowValue1 && v1.FlowValue2 == v2.FlowValue2 && v1.IsReward == v2.IsReward && v1.Target == v2.Target {
-				find = true
-				break
-			}
-		}
-		if !find {
-			return errors.New("invalid lock reward")
-		}
-	}
-	return nil
-}
-
 // Prepare implements consensus.Engine, preparing all the consensus fields of the
 // header for running the transactions on top.
 func (a *Alien) Prepare(chain consensus.ChainHeaderReader, header *types.Header) error {
@@ -1144,7 +1105,8 @@ func (a *Alien) Finalize(chain consensus.ChainHeaderReader, header *types.Header
 			var revertSrt []ExchangeSRTRecord
 			snap1 := snap.copy()
 			leftAmount:=common.Big0
-			currentHeaderExtra.LockReward, revertSrt, harvest,err,leftAmount = snap1.storageVerificationCheck(header.Number.Uint64(), snap1.getBlockPreDay(), a.db, currentHeaderExtra.LockReward,state)
+			curLeaseSpace :=common.Big0
+			currentHeaderExtra.LockReward, revertSrt, harvest,err,leftAmount, curLeaseSpace = snap1.storageVerificationCheck(header.Number.Uint64(), snap1.getBlockPreDay(), a.db, currentHeaderExtra.LockReward,state)
              if err!=nil {
              	return err
 			 }
@@ -1185,6 +1147,15 @@ func (a *Alien) Finalize(chain consensus.ChainHeaderReader, header *types.Header
 			}
 			if isGEPOSNewEffect(number){
 				currentHeaderExtra.CandidateAutoExit,currentHeaderExtra.CandidatePEntrustExit=snap1.checkCandidateAutoExit(header.Number.Uint64(),currentHeaderExtra.CandidateAutoExit,state,currentHeaderExtra.CandidatePEntrustExit)
+			}
+			if isGEPoCrsAccCalNumber(number){
+				if nil != curLeaseSpace && curLeaseSpace.Cmp(common.Big0)>0 {
+					if nil == currentHeaderExtra.CurLeaseSpace {
+						currentHeaderExtra.CurLeaseSpace = new(big.Int).Set(curLeaseSpace)
+					} else {
+						currentHeaderExtra.CurLeaseSpace = new(big.Int).Add(currentHeaderExtra.CurLeaseSpace, curLeaseSpace)
+					}
+				}
 			}
 		}
 
@@ -1571,37 +1542,6 @@ func accumulateBandwidthRewards(currentLockReward []LockRewardRecord, config *pa
 			IsReward: sscEnumBandwidthReward,
 		})
 		flowHarvest = new(big.Int).Add(flowHarvest, reward)
-	}
-	return currentLockReward, flowHarvest
-}
-func accumulateFlowRewards(currentLockReward []LockRewardRecord, snap *Snapshot, db ethdb.Database) ([]LockRewardRecord, *big.Int) {
-	totalFlow := big.NewInt(0)
-	flowcensus := snap.FlowMiner.accumulateFlows(db)
-	flowHarvest := big.NewInt(0)
-	for minerAddress, bandwidth := range flowcensus {
-		if claimed, ok := snap.Bandwidth[minerAddress]; ok {
-			validFlow := bandwidth.FlowValue1
-			if validFlow <= 0 {
-				continue
-			}
-			reward := big.NewInt(0)
-			bandwidthHigh := uint64(claimed.BandwidthClaimed) * uint64(24*60*60)
-
-			if bandwidth.FlowValue1 > bandwidthHigh {
-				validFlow = bandwidthHigh
-			}
-			totalFlow = new(big.Int).Add(totalFlow, new(big.Int).SetUint64(validFlow))
-			rewardScale := getFlowRewardScale(decimal.NewFromBigInt(new(big.Int).Add(snap.FlowTotal, totalFlow), 0))
-			reward = decimal.NewFromBigInt(new(big.Int).SetUint64(validFlow), 0).Mul(rewardScale).BigInt()
-			flowHarvest = new(big.Int).Add(flowHarvest, reward)
-			currentLockReward = append(currentLockReward, LockRewardRecord{
-				Target:     minerAddress,
-				Amount:     new(big.Int).Set(reward),
-				IsReward:   sscEnumFlwReward,
-				FlowValue1: bandwidth.FlowValue1,
-				FlowValue2: validFlow,
-			})
-		}
 	}
 	return currentLockReward, flowHarvest
 }

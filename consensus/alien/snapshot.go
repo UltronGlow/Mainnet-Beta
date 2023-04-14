@@ -250,6 +250,7 @@ type Snapshot struct {
 	SRTHash        common.Hash                          `json:"srthash"`
 	STGBandwidthMakeup   map[common.Address]*BandwidthMakeup      `json:"stgbandwidthmakeup"`
 	PosPledge            map[common.Address]*PosPledgeItem        `json:"pospledge"`
+	TotalLeaseSpace      *big.Int                          `json:"totalleasespace"`
 }
 
 var (
@@ -622,6 +623,9 @@ func (s *Snapshot) copy() *Snapshot {
 				}
 			}
 		}
+	}
+	if s.TotalLeaseSpace!=nil{
+		cpy.TotalLeaseSpace=new(big.Int).Set(s.TotalLeaseSpace)
 	}
 	copy(cpy.HistoryHash, s.HistoryHash)
 	copy(cpy.Signers, s.Signers)
@@ -1063,6 +1067,12 @@ func (s *Snapshot) apply(headers []*types.Header, db ethdb.Database, chain conse
 		}
 		if header.Number.Uint64()==PosLastPunishFixNumber{
 			snap.initPosExitPunishFix()
+		}
+		if header.Number.Uint64()==PoCrsAccCalNumber-1{
+			snap.TotalLeaseSpace=new(big.Int).Set(initTotalLeaseSpace)
+		}
+		if isGEPoCrsAccCalNumber(header.Number.Uint64()){
+			snap.updateTotalLeaseSpace(headerExtra.CurLeaseSpace)
 		}
 	}
 	snap.Number += uint64(len(headers))
@@ -2879,6 +2889,16 @@ func (snap *Snapshot) initPosExitPunishFix() {
 	for _,item:=range snap.PosPledge{
 		if item.LastPunish>0&&item.LastPunish<(PosNewEffectNumber-1){
 			item.LastPunish=PosNewEffectNumber-1
+		}
+	}
+}
+
+func (snap *Snapshot) updateTotalLeaseSpace(curLeaseSpace *big.Int) {
+	if curLeaseSpace!=nil&&0 < curLeaseSpace.Cmp(big.NewInt(0)) {
+		if nil == snap.TotalLeaseSpace {
+			snap.TotalLeaseSpace = new(big.Int).Set(curLeaseSpace)
+		} else {
+			snap.TotalLeaseSpace = new(big.Int).Add(snap.TotalLeaseSpace, curLeaseSpace)
 		}
 	}
 }
