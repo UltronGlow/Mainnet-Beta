@@ -170,6 +170,30 @@ func (api *API) GetSnapshotReleaseAtNumber(number uint64,part string) (*Snapshot
 			if snapshot.FlowRevenue.PosExitLock!=nil {
 				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.PosExitLock,api.alien.db)
 			}
+		} else if part =="stpentrustexit"{
+			if snapshot.FlowRevenue.STPEntrustExitLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.STPEntrustExitLock,api.alien.db)
+			}
+		}else if part =="stpentrust"{
+			if snapshot.FlowRevenue.STPEntrustLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.STPEntrustLock,api.alien.db)
+			}
+		} else if part =="splock"{
+			if snapshot.FlowRevenue.SpLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpLock,api.alien.db)
+			}
+		}else if part =="spentrustlock"{
+			if snapshot.FlowRevenue.SpEntrustLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpEntrustLock,api.alien.db)
+			}
+		}else if part =="spexit"{
+			if snapshot.FlowRevenue.SpExitLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpExitLock,api.alien.db)
+			}
+		}else if part =="spentrustexit"{
+			if snapshot.FlowRevenue.SpEntrustExitLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpEntrustExitLock,api.alien.db)
+			}
 		}
 	}else{
 		snapshotRelease.CandidatePledge=snapshot.CandidatePledge
@@ -185,6 +209,14 @@ func (api *API) GetSnapshotReleaseAtNumber(number uint64,part string) (*Snapshot
 		if isGEPOSNewEffect(number){
 			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.PosExitLock,api.alien.db)
 		}
+		if isGEInitStorageManagerNumber(number){
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.STPEntrustExitLock,api.alien.db)
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.STPEntrustLock,api.alien.db)
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpLock,api.alien.db)
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpEntrustLock,api.alien.db)
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpExitLock,api.alien.db)
+			snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpEntrustExitLock,api.alien.db)
+		}
 	}
 	return snapshotRelease, err
 }
@@ -195,14 +227,19 @@ func (s *SnapshotRelease) appendFRItems(items []*PledgeItem) {
 			s.FlowRevenue[item.TargetAddress] = &LockBalanceData{
 				RewardBalance:make(map[uint32]*big.Int),
 				LockBalance: make(map[uint64]map[uint32]*PledgeItem),
+				RewardBalanceV1: make(map[uint32]map[common.Address]*LockTmpData),
+				LockBalanceV1: make(map[uint64]map[uint32]map[common.Address]*PledgeItem),
 			}
 		}
 		flowRevenusTarget := s.FlowRevenue[item.TargetAddress]
-		if _, ok := flowRevenusTarget.LockBalance[item.StartHigh]; !ok {
-			flowRevenusTarget.LockBalance[item.StartHigh] = make(map[uint32]*PledgeItem)
+		if _, ok := flowRevenusTarget.LockBalanceV1[item.StartHigh]; !ok {
+			flowRevenusTarget.LockBalanceV1[item.StartHigh] = make(map[uint32]map[common.Address]*PledgeItem)
 		}
-		lockBalance := flowRevenusTarget.LockBalance[item.StartHigh]
-		lockBalance[item.PledgeType] = item
+		lockBalanceV1 := flowRevenusTarget.LockBalanceV1[item.StartHigh]
+		if _, ok := lockBalanceV1[item.PledgeType]; !ok {
+			lockBalanceV1[item.PledgeType]=make(map[common.Address]*PledgeItem)
+		}
+		lockBalanceV1[item.PledgeType][item.RevenueContract] = item
 	}
 }
 
@@ -213,12 +250,19 @@ func (sr *SnapshotRelease) appendFR(FlowRevenue map[common.Address]*LockBalanceD
 			sr.FlowRevenue[t1] = &LockBalanceData{
 				RewardBalance:make(map[uint32]*big.Int),
 				LockBalance: make(map[uint64]map[uint32]*PledgeItem),
+				RewardBalanceV1: make(map[uint32]map[common.Address]*LockTmpData),
+				LockBalanceV1: make(map[uint64]map[uint32]map[common.Address]*PledgeItem),
 			}
 		}
 		rewardBalance:=item1.RewardBalance
 		for t2, item2 := range rewardBalance {
 			sr.FlowRevenue[t1].RewardBalance[t2]=item2
 		}
+		rewardBalanceV1:=item1.RewardBalanceV1
+		for t3, item3 := range rewardBalanceV1 {
+			sr.FlowRevenue[t1].RewardBalanceV1[t3]=item3
+		}
+
 		lockBalance:=item1.LockBalance
 		for t3, item3 := range lockBalance {
 			if _, ok := sr.FlowRevenue[t1].LockBalance[t3]; !ok {
@@ -228,6 +272,26 @@ func (sr *SnapshotRelease) appendFR(FlowRevenue map[common.Address]*LockBalanceD
 			for t4,item4:=range item3{
 				if _, ok := t3LockBalance[t4]; !ok {
 					t3LockBalance[t4] = item4
+				}
+			}
+		}
+
+		lockBalanceV1:=item1.LockBalanceV1
+		if lockBalanceV1!=nil{
+			for t3, item3 := range lockBalanceV1 {
+				if _, ok := sr.FlowRevenue[t1].LockBalanceV1[t3]; !ok {
+					sr.FlowRevenue[t1].LockBalanceV1[t3] = make(map[uint32]map[common.Address]*PledgeItem)
+				}
+				t3LockBalance:=sr.FlowRevenue[t1].LockBalanceV1[t3]
+				for t4,item4:=range item3{
+					if _, ok := t3LockBalance[t4]; !ok {
+						t3LockBalance[t4]=make(map[common.Address]*PledgeItem)
+					}
+					for t5,item5:=range item4{
+						if _, ok := t3LockBalance[t4][t5]; !ok {
+							t3LockBalance[t4][t5]=item5
+						}
+					}
 				}
 			}
 		}
@@ -448,6 +512,25 @@ func (api *API) GetSPledgeAtNumber(number uint64) (*SnapshotSPledge, error) {
 			LastVerificationSuccessTime:sPledge.LastVerificationSuccessTime,
 			ValidationFailureTotalTime:sPledge.ValidationFailureTotalTime,
 		}
+		if entrust,eok:=snapshot.StorageData.StorageEntrust[pledgeAddr];eok{
+			snapshotSPledge.StoragePledge[pledgeAddr].Manager=entrust.Manager
+			snapshotSPledge.StoragePledge[pledgeAddr].Sphash=entrust.Sphash
+			snapshotSPledge.StoragePledge[pledgeAddr].Spheight=new(big.Int).Set(entrust.Spheight)
+			snapshotSPledge.StoragePledge[pledgeAddr].EntrustRate=new(big.Int).Set(entrust.EntrustRate)
+			snapshotSPledge.StoragePledge[pledgeAddr].ManagerAmount=new(big.Int).Set(entrust.ManagerAmount)
+			snapshotSPledge.StoragePledge[pledgeAddr].Managerheight=new(big.Int).Set(entrust.Managerheight)
+			snapshotSPledge.StoragePledge[pledgeAddr].HavAmount=new(big.Int).Set(entrust.PledgeAmount)
+			snapshotSPledge.StoragePledge[pledgeAddr].Detail=make(map[common.Hash]*SnEntrustDetail2 ,0)
+			if len(entrust.Detail)>0{
+				for hash,eDtail:=range entrust.Detail{
+					snapshotSPledge.StoragePledge[pledgeAddr].Detail[hash]=&SnEntrustDetail2{
+						Address:eDtail.Address,
+						Height:eDtail.Height,
+						Amount:eDtail.Amount,
+					}
+				}
+			}
+		}
 		lease:=sPledge.Lease
 		for hash,l:=range lease {
 			lease2:=&Lease2{
@@ -481,6 +564,14 @@ type SPledge2 struct {
 	LastVerificationTime  *big.Int `json:"lastverificationtime"`
 	LastVerificationSuccessTime  *big.Int `json:"lastverificationsuccesstime"`
 	ValidationFailureTotalTime *big.Int `json:"validationfailuretotaltime"`
+	Manager common.Address `json:"manager"`
+	Sphash  common.Hash `json:"sphash"`
+	Spheight  *big.Int `json:"spheight"`
+	EntrustRate *big.Int `json:"entrustRate"`
+	ManagerAmount  *big.Int `json:"managerAmount"`
+	Managerheight  *big.Int `json:"managerheight"`
+	HavAmount  *big.Int `json:"havAmount"`
+	Detail map[common.Hash]*SnEntrustDetail2 `json:"entrustDetail"`
 }
 type Lease2 struct {
 	Address common.Address `json:"address"`
@@ -493,7 +584,11 @@ type Lease2 struct {
 type LeaseDetail2 struct {
 	Deposit                    *big.Int    `json:"deposit"`
 }
-
+type SnEntrustDetail2 struct {
+	Address common.Address `json:"address"`
+	Height *big.Int      `json:"height"`
+	Amount *big.Int `json:"amount"`
+}
 func (api *API) GetStorageRewardAtNumber(number uint64,part string) (*SnapshotStorageReward, error) {
 	log.Info("api GetStorageRewardAtNumber", "number", number)
 	header := api.chain.GetHeaderByNumber(number)
@@ -997,6 +1092,30 @@ func (api *API) GetSnapshotReleaseAtNumber2(number uint64,part string,startLNum 
 			if snapshot.FlowRevenue.PosExitLock!=nil {
 				snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosExitLock,api.alien.db,startLNum,endLNum)
 			}
+		}else if part =="stpentrustexit"{
+			if snapshot.FlowRevenue.STPEntrustExitLock!=nil {
+				snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.STPEntrustExitLock,api.alien.db,startLNum,endLNum)
+			}
+		}else if part =="stpentrust"{
+			if snapshot.FlowRevenue.STPEntrustLock!=nil {
+				snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.STPEntrustLock,api.alien.db,startLNum,endLNum)
+			}
+		} else if part =="splock"{
+			if snapshot.FlowRevenue.SpLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpLock,api.alien.db)
+			}
+		}else if part =="spentrustlock"{
+			if snapshot.FlowRevenue.SpEntrustLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpEntrustLock,api.alien.db)
+			}
+		}else if part =="spexit"{
+			if snapshot.FlowRevenue.SpExitLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpExitLock,api.alien.db)
+			}
+		}else if part =="spentrustexit"{
+			if snapshot.FlowRevenue.SpEntrustExitLock!=nil {
+				snapshotRelease.appendFRlockData(snapshot.FlowRevenue.SpEntrustExitLock,api.alien.db)
+			}
 		}
 	}else{
 		snapshotRelease.CandidatePledge=snapshot.CandidatePledge
@@ -1011,6 +1130,14 @@ func (api *API) GetSnapshotReleaseAtNumber2(number uint64,part string,startLNum 
 		}
 		if isGEPOSNewEffect(number){
 			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.PosExitLock,api.alien.db,startLNum,endLNum)
+		}
+		if isGEInitStorageManagerNumber(number){
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.STPEntrustExitLock,api.alien.db,startLNum,endLNum)
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.STPEntrustLock,api.alien.db,startLNum,endLNum)
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.SpLock,api.alien.db,startLNum,endLNum)
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.SpEntrustLock,api.alien.db,startLNum,endLNum)
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.SpExitLock,api.alien.db,startLNum,endLNum)
+			snapshotRelease.appendFRlockData2(snapshot.FlowRevenue.SpEntrustExitLock,api.alien.db,startLNum,endLNum)
 		}
 	}
 	return snapshotRelease, err
@@ -1034,15 +1161,20 @@ func (s *SnapshotRelease) appendFRItems2(items []*PledgeItem,startLNum uint64,en
 			s.FlowRevenue[item.TargetAddress] = &LockBalanceData{
 				RewardBalance:make(map[uint32]*big.Int),
 				LockBalance: make(map[uint64]map[uint32]*PledgeItem),
+				RewardBalanceV1: make(map[uint32]map[common.Address]*LockTmpData),
+				LockBalanceV1: make(map[uint64]map[uint32]map[common.Address]*PledgeItem),
 			}
 		}
 		if inLNumScope(item.StartHigh,startLNum,endLNum){
 			flowRevenusTarget := s.FlowRevenue[item.TargetAddress]
-			if _, ok := flowRevenusTarget.LockBalance[item.StartHigh]; !ok {
-				flowRevenusTarget.LockBalance[item.StartHigh] = make(map[uint32]*PledgeItem)
+			if _, ok := flowRevenusTarget.LockBalanceV1[item.StartHigh]; !ok {
+				flowRevenusTarget.LockBalanceV1[item.StartHigh] = make(map[uint32]map[common.Address]*PledgeItem)
 			}
-			lockBalance := flowRevenusTarget.LockBalance[item.StartHigh]
-			lockBalance[item.PledgeType] = item
+			lockBalanceV1 := flowRevenusTarget.LockBalanceV1[item.StartHigh]
+			if _, ok := lockBalanceV1[item.PledgeType]; !ok {
+				lockBalanceV1[item.PledgeType]=make(map[common.Address]*PledgeItem)
+			}
+			lockBalanceV1[item.PledgeType][item.RevenueContract] = item
 		}
 	}
 }
@@ -1054,6 +1186,8 @@ func (sr *SnapshotRelease) appendFR2(FlowRevenue map[common.Address]*LockBalance
 			sr.FlowRevenue[t1] = &LockBalanceData{
 				RewardBalance:make(map[uint32]*big.Int),
 				LockBalance: make(map[uint64]map[uint32]*PledgeItem),
+				RewardBalanceV1: make(map[uint32]map[common.Address]*LockTmpData),
+				LockBalanceV1: make(map[uint64]map[uint32]map[common.Address]*PledgeItem),
 			}
 		}
 		rewardBalance:=item1.RewardBalance
@@ -1070,6 +1204,28 @@ func (sr *SnapshotRelease) appendFR2(FlowRevenue map[common.Address]*LockBalance
 				for t4,item4:=range item3{
 					if _, ok := t3LockBalance[t4]; !ok {
 						t3LockBalance[t4] = item4
+					}
+				}
+			}
+		}
+
+		lockBalanceV1:=item1.LockBalanceV1
+		if lockBalanceV1!=nil{
+			for t3, item3 := range lockBalanceV1 {
+				if inLNumScope(t3,startLNum,endLNum){
+					if _, ok := sr.FlowRevenue[t1].LockBalanceV1[t3]; !ok {
+						sr.FlowRevenue[t1].LockBalanceV1[t3] = make(map[uint32]map[common.Address]*PledgeItem)
+					}
+					t3LockBalance:=sr.FlowRevenue[t1].LockBalanceV1[t3]
+					for t4,item4:=range item3{
+						if _, ok := t3LockBalance[t4]; !ok {
+							t3LockBalance[t4]=make(map[common.Address]*PledgeItem)
+						}
+						for t5,item5:=range item4{
+							if _, ok := t3LockBalance[t4][t5]; !ok {
+								t3LockBalance[t4][t5]=item5
+							}
+						}
 					}
 				}
 			}
@@ -1130,4 +1286,191 @@ func (api *API) GetSnapshotTLSAtNumber(number uint64) (*SnapshotTLS, error) {
 		TotalLeaseSpace:new(big.Int).Set(snapshot.TotalLeaseSpace),
 	}
 	return snapshotTLS, err
+}
+func (api *API) GetSPoolAtNumber(number uint64) (*SpDataApi, error) {
+	log.Info("api GetSPDataAtNumber", "number", number)
+	header := api.chain.GetHeaderByNumber(number)
+	if header == nil {
+		return nil, errUnknownBlock
+	}
+	snapshot,err:= api.getSnapshotCache(header)
+	if err != nil {
+		log.Warn("Fail to GetSPDataAtNumber", "err", err)
+		return nil, errUnknownBlock
+	}
+	snapshotSPdata := &SpDataApi{
+		PoolPledgeItem: make(map[common.Hash]*PoolPledgeApi),
+	}
+	for hash,spool:=range snapshot.SpData.PoolPledge{
+		snapshotSPdata.PoolPledgeItem[hash]=&PoolPledgeApi{
+			SpAddr:         common.BigToAddress(hash.Big()),
+			Address:        spool.Address,
+			Manager:        spool.Manager,
+			Number:         new(big.Int).Set(spool.Number),
+			TotalAmount:    new(big.Int).Set(spool.TotalAmount),
+			TotalCapacity:  new(big.Int).Set(spool.TotalCapacity),
+			UsedCapacity:   new(big.Int).Set(spool.UsedCapacity),
+			PunishNumber:   new(big.Int).Set(spool.PunishNumber),
+			SnRatio:        new(big.Int).Set(spool.SnRatio),
+			RevenueAddress: spool.RevenueAddress,
+			ManagerAmount:  new(big.Int).Set(spool.ManagerAmount),
+			Fee:            spool.Fee,
+			EntrustRate:    spool.EntrustRate,
+			Status:         spool.Status,
+			EtDetail:       make(map[common.Hash]*EntrustDetailApi, 0),
+		}
+		for pledgeHash, detail := range spool.EtDetail {
+			snapshotSPdata.PoolPledgeItem[hash].EtDetail[pledgeHash] = &EntrustDetailApi{
+				Address: detail.Address,
+				Height:  new(big.Int).Set(detail.Height),
+				Amount:  new(big.Int).Set(detail.Amount),
+			}
+		}
+	}
+
+	return snapshotSPdata,nil
+}
+type SpDataApi struct {
+	PoolPledgeItem map[common.Hash]*PoolPledgeApi `json:"poolpledge"`
+}
+
+type PoolPledgeApi struct {
+	SpAddr         common.Address                 `json:"spAddr"`
+	Address        common.Address                 `json:"address"`
+	Manager        common.Address                 `json:"manager"`
+	Number         *big.Int                       `json:"number"`
+	TotalAmount    *big.Int                       `json:"totalAmount"`
+	TotalCapacity  *big.Int                       `json:"totalcapacity"`
+	UsedCapacity   *big.Int                       `json:"usedcapacity"`
+	PunishNumber   *big.Int                       `json:"punishNumber"`
+	SnRatio        *big.Int                       `json:"snRatio"`
+	RevenueAddress common.Address                 `json:"revenueAddress"`
+	ManagerAmount  *big.Int                       `json:"managerAmount"`
+	Fee            uint64                         `json:"fee"`
+	EntrustRate    uint64                         `json:"entrustRate"`
+	Status         uint64                         `json:"status"`
+	EtDetail       map[common.Hash]*EntrustDetailApi `json:"entrustDetail"`
+}
+type EntrustDetailApi struct {
+	Address common.Address `json:"address"`
+	Height  *big.Int       `json:"height"`
+	Amount  *big.Int       `json:"amount"`
+}
+
+type SnapshotRewardBalanceV1 struct {
+	FlowRevenue     map[common.Address]*RewardBalanceV1Data        `json:"flowrevenve"`
+}
+
+type RewardBalanceV1Data struct {
+	RewardBalanceV1 map[uint32]map[common.Address]*LockTmpData `json:"rewardbalanceV1"`
+}
+func (api *API) GetSnapshotRewardBalanceV1(number uint64,part string) (*SnapshotRewardBalanceV1, error) {
+	log.Info("api SnapshotRewardBalanceV1", "number",number,"part",part)
+	header := api.chain.GetHeaderByNumber(number)
+	if header == nil {
+		return nil, errUnknownBlock
+	}
+	snapshot,err:= api.getSnapshotCache(header)
+	if err != nil {
+		log.Warn("Fail to SnapshotRewardBalanceV1", "err", err)
+		return nil, errUnknownBlock
+	}
+	snapshotRelease := &SnapshotRewardBalanceV1{
+		FlowRevenue: make(map[common.Address]*RewardBalanceV1Data),
+	}
+	if part!=""{
+		if part =="rewardlock"{
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.RewardLock)
+		}else if part =="flowlock"{
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.FlowLock)
+		}else if part =="bandwidthlock"{
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.BandwidthLock)
+		}else if part =="posplexit"{
+			if snapshot.FlowRevenue.PosPgExitLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.PosPgExitLock)
+			}
+		}else if part =="posexit"{
+			if snapshot.FlowRevenue.PosExitLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.PosExitLock)
+			}
+		}else if part =="stpentrustexit"{
+			if snapshot.FlowRevenue.STPEntrustExitLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.STPEntrustExitLock)
+			}
+		}else if part =="stpentrust"{
+			if snapshot.FlowRevenue.STPEntrustLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.STPEntrustLock)
+			}
+		} else if part =="splock"{
+			if snapshot.FlowRevenue.SpLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpLock)
+			}
+		}else if part =="spentrustlock"{
+			if snapshot.FlowRevenue.SpEntrustLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpEntrustLock)
+			}
+		}else if part =="spexit"{
+			if snapshot.FlowRevenue.SpExitLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpExitLock)
+			}
+		}else if part =="spentrustexit"{
+			if snapshot.FlowRevenue.SpEntrustExitLock!=nil {
+				snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpEntrustExitLock)
+			}
+		}
+	}else{
+		snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.RewardLock)
+		snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.FlowLock)
+		snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.BandwidthLock)
+		if number >= PledgeRevertLockEffectNumber{
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.PosPgExitLock)
+		}
+		if isGEPOSNewEffect(number){
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.PosExitLock)
+		}
+		if isGEInitStorageManagerNumber(number){
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.STPEntrustExitLock)
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.STPEntrustLock)
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpLock)
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpEntrustLock)
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpExitLock)
+			snapshotRelease.appendRewardBalanceV1Data(snapshot.FlowRevenue.SpEntrustExitLock)
+		}
+	}
+	return snapshotRelease, err
+}
+
+
+func (sr *SnapshotRewardBalanceV1) appendRewardBalanceV1Data(lockData *LockData) (error) {
+	sr.appendRBd(lockData.FlowRevenue)
+	return nil
+}
+
+func (sr *SnapshotRewardBalanceV1) appendRBd(FlowRevenue map[common.Address]*LockBalanceData) (error) {
+	fr1:=FlowRevenue
+	for t1, item1 := range fr1 {
+		if _, ok := sr.FlowRevenue[t1]; !ok {
+			sr.FlowRevenue[t1] = &RewardBalanceV1Data{
+				RewardBalanceV1: make(map[uint32]map[common.Address]*LockTmpData),
+			}
+		}
+		rewardBalanceV1:=item1.RewardBalanceV1
+		if rewardBalanceV1!=nil{
+			for t3, item3 := range rewardBalanceV1 {
+					if _, ok := sr.FlowRevenue[t1].RewardBalanceV1[t3]; !ok {
+						sr.FlowRevenue[t1].RewardBalanceV1[t3] = make(map[common.Address]*LockTmpData)
+					}
+					t3LockBalance:=sr.FlowRevenue[t1].RewardBalanceV1[t3]
+					for t4,item4:=range item3{
+						if _, ok := t3LockBalance[t4]; !ok {
+							t3LockBalance[t4]=&LockTmpData{
+								Amount:new(big.Int).Set(item4.Amount),
+								RevenueAddress: item4.RevenueAddress,
+							}
+						}
+					}
+			}
+		}
+	}
+	return nil
 }

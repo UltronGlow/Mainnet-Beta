@@ -35,6 +35,16 @@ const (
 	utgStorageBw          = "chbw"
 	utgSRTExch            = "Exch"
 	utgStoragePledgeCatchUp ="stCatchUp"
+	utgStoragePledgeEditmgaddr ="editmgaddr"
+	utgStoragePledgeStchpg ="stchpg"
+	utgStoragePledgeStwtreward ="stwtreward"
+	utgStoragePledgeSetsp ="setsp"
+	utgStoragePledgeExitsp ="exitsp"
+	utgStoragePledgeStreplace ="streplace"
+	utgStoragePledgeStwtpg ="stwtpg"
+	utgStoragePledgeWtfd ="wtfd"
+	utgStoragePledgeWtpgexit ="wtpgexit"
+
 	storagePledgeRewardkey   = "storagePledgeReward-%d"
 	storageLeaseRewardkey    = "storageLeaseReward-%d"
 	revertSpaceLockRewardkey = "revertSpaceLockReward-%d"
@@ -53,6 +63,7 @@ const (
 	SPledgeExit      = 1
 	SPledgeRemoving  = 5 //30-day verification failed
 	SPledgeRetrun    = 6 //SRT and pledge deposit have been returned
+	SPledgeInactive  = 7
 	LeaseNotPledged  = 0
 	LeaseNormal      = 1
 	LeaseUserRescind = 2
@@ -90,12 +101,18 @@ var (
 	storageRentAdjRatio=big.NewInt(8000)//0.8*10000
 	storagePledgefactor=decimal.NewFromFloat(0.4)
 	rentLeftSpace=new(big.Int).Mul(gbTob,big.NewInt(5))
-	initTotalLeaseSpace=new(big.Int).Add(new(big.Int).Mul(eb1b,big.NewInt(10)),new(big.Int).SetUint64(uint64(692813346857858718))) 
+	initTotalLeaseSpace=new(big.Int).Add(new(big.Int).Mul(eb1b,big.NewInt(10)),new(big.Int).SetUint64(uint64(692813346857858718)))
+	sPPoollockDay = uint64(7)
+	MinimumThresholdForPledgeAmount=big.NewInt(30)
+	sPDistributionDefaultRate =big.NewInt(10000)
+	stpEntrustMinDay     = big.NewInt(7)
 )
+
 
 type StorageData struct {
 	StoragePledge map[common.Address]*SPledge `json:"spledge"`
 	Hash          common.Hash                 `json:"validhash"`
+	StorageEntrust map[common.Address]*SEntrust `json:"sentrust"`
 }
 
 /**
@@ -298,13 +315,97 @@ type BandwidthMakeup struct {
 	AdjustCount  uint64  `json:"adjustCount"`
 }
 
+type SEntrustDetail struct {
+	Address common.Address `json:"address"`
+	Height *big.Int      `json:"height"`
+	Amount *big.Int `json:"amount"`
+}
+
+type SEntrust struct {
+	 Manager common.Address `json:"manager"`
+	 Sphash  common.Hash    `json:"sphash"`
+	 Spheight *big.Int      `json:"spheight"`
+	 EntrustRate  *big.Int `json:"entrustRate"`
+	 PledgeAmount *big.Int `json:"pledgeAmount"`
+	 ManagerAmount *big.Int `json:"managerAmount"`
+	 Managerheight *big.Int `json:"managerheight"`
+	 Detail map[common.Hash]*SEntrustDetail `json:"detail"`
+}
+
+type ModifySManagerRecord struct {
+	Pledge common.Address `json:"pledge"`
+	Manager common.Address `json:"manager"`
+}
+type CompleteSPledgeRecord struct {
+	Pledge common.Address `json:"pledge"`
+	Amount *big.Int `json:"amount"`
+	Hash  common.Hash `json:"hash"`
+}
+
+type SPRewardRatioRecord struct {
+	Pledge common.Address `json:"pledge"`
+	Rate *big.Int `json:"rate"`
+}
+type SPPoolRecord struct {
+	Pledge common.Address `json:"pledge"`
+	Hash  common.Hash `json:"hash"`
+}
+
+type SPMigrationRecord struct {
+	Pledge common.Address `json:"pledge"`
+	RootHash  common.Hash `json:"hash"`
+}
+
+type SPledge2Record struct {
+	PledgeAddr      common.Address `json:"pledgeAddr"`
+	Address         common.Address `json:"address"`
+	Price           *big.Int       `json:"price"`
+	SpaceDeposit    *big.Int       `json:"spacedeposit"`
+	StorageCapacity *big.Int       `json:"storagecapacity"`
+	StorageSize     *big.Int       `json:"storagesize"`
+	RootHash        common.Hash    `json:"roothash"`
+	PledgeNumber    *big.Int       `json:"pledgeNumber"`
+	Bandwidth       *big.Int       `json:"bandwidth"`
+	PledgeAmount    *big.Int `json:"pledgeAmount"`
+	EntrustRate     *big.Int `json:"entrustRate"`
+	Hash  common.Hash `json:"hash"`
+}
+
+type SPEntrustRecord struct {
+	Target  common.Address
+	Amount  *big.Int
+	Address common.Address
+	Hash    common.Hash
+}
+type SETransferRecord struct {
+	Address  common.Address
+	PledgeHash common.Hash
+	Original common.Address
+	//PoS SN SP
+	TargetType    string
+	Target  common.Address
+	TargetHash    common.Hash
+	PledgeAmount *big.Int
+	LockAmount *big.Int
+}
+type SEExitRecord struct {
+	Target  common.Address
+	Hash    common.Hash
+	Address common.Address
+	Amount  *big.Int
+}
+
 func (a *Alien) processStorageCustomTx(txDataInfo []string, headerExtra HeaderExtra, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, snapCache *Snapshot, number *big.Int, state *state.StateDB, chain consensus.ChainHeaderReader) HeaderExtra {
 	if txDataInfo[posCategory] == utgRentRequest {
 		headerExtra.LeaseRequest = a.processRentRequest(headerExtra.LeaseRequest, txDataInfo, txSender, tx, receipts, snapCache, number.Uint64())
 	} else if txDataInfo[posCategory] == utgSRTExch {
 		headerExtra.ExchangeSRT = a.processExchangeSRT(headerExtra.ExchangeSRT, txDataInfo, txSender, tx, receipts, state, snapCache)
 	} else if txDataInfo[posCategory] == utgStorageDeclare {
-		headerExtra.StoragePledge = a.declareStoragePledge(headerExtra.StoragePledge, txDataInfo, txSender, tx, receipts, state, snapCache, number, chain)
+		if isGEInitStorageManagerNumber(number.Uint64()){
+			headerExtra.StoragePledge2 = a.declareStoragePledge2(headerExtra.StoragePledge2, txDataInfo, txSender, tx, receipts, state, snapCache, number, chain)
+		}else{
+			headerExtra.StoragePledge = a.declareStoragePledge(headerExtra.StoragePledge, txDataInfo, txSender, tx, receipts, state, snapCache, number, chain)
+		}
 	} else if txDataInfo[posCategory] == utgStorageExit {
 		headerExtra.StoragePledgeExit, headerExtra.ExchangeSRT = a.storagePledgeExit(headerExtra.StoragePledgeExit, headerExtra.ExchangeSRT, txDataInfo, txSender, tx, receipts, state, snapCache, number)
 	} else if txDataInfo[posCategory] == utgRentPg {
@@ -331,6 +432,35 @@ func (a *Alien) processStorageCustomTx(txDataInfo []string, headerExtra HeaderEx
 			headerExtra.StorageBwPay = a.payStorageBWPledge(headerExtra.StorageBwPay, txDataInfo, txSender, tx, receipts, state, snapCache, number)
 		}
 	}
+	if isGEInitStorageManagerNumber(number.Uint64()){
+		if txDataInfo[posCategory]== utgStoragePledgeEditmgaddr {
+			headerExtra.ModifySManager = a.modifyStorageManager(headerExtra.ModifySManager, txDataInfo, txSender, tx, receipts, state, snapCache, number)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeStchpg {
+			headerExtra.CompleteSPledge = a.completeStoragePledge(headerExtra.CompleteSPledge, txDataInfo, txSender, tx, receipts, state, snapCache, number)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeStwtreward {
+			headerExtra.SPRewardRatio = a.storageSetRewardRatio(headerExtra.SPRewardRatio, txDataInfo, txSender, tx, receipts, state, snapCache, number)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeSetsp {
+			headerExtra.SPPool = a.storageSetStoragePools(headerExtra.SPPool, txDataInfo, txSender, tx, receipts, state, snapCache, number)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeExitsp {
+			headerExtra.SPEPool = a.storageExitPool(headerExtra.SPEPool, txDataInfo, txSender, tx, receipts, state, snapCache, number)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeStreplace {
+			headerExtra.SPMigration,headerExtra.LockReward , headerExtra.ExchangeSRT = a.storageMigration(headerExtra.SPMigration,headerExtra.LockReward, headerExtra.ExchangeSRT, txDataInfo, txSender, tx, receipts, state, snapCache, number,chain)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeStwtpg {
+			headerExtra.SPEntrust = a.storageSPEntrust(headerExtra.SPEntrust, txDataInfo, txSender, tx, receipts, state, snapCache, number,chain)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeWtfd {
+			headerExtra.SETransfer = a.storageEntrustedPledgeTransfer(headerExtra.SETransfer, txDataInfo, txSender, tx, receipts, state, snapCache, number,chain)
+		}
+		if txDataInfo[posCategory]== utgStoragePledgeWtpgexit {
+			headerExtra.SEExit = a.storageEntrustedPledgeExit(headerExtra.SEExit, txDataInfo, txSender, tx, receipts, state, snapCache, number,chain)
+		}
+	}
 	return headerExtra
 }
 func (snap *Snapshot) storageApply(headerExtra HeaderExtra, header *types.Header, db ethdb.Database) (*Snapshot, error) {
@@ -338,6 +468,20 @@ func (snap *Snapshot) storageApply(headerExtra HeaderExtra, header *types.Header
 	if err != nil {
 		log.Error("calStorageVerificationCheck", "err", err)
 		return calsnap, err
+	}
+	if isGEInitStorageManagerNumber(header.Number.Uint64()){
+		if isSpVerificationCheck(header.Number.Uint64(), snap.Period) {
+			snap.spAccumulatePublish(header.Number)
+		}
+		if isSpDelExit(header.Number.Uint64(), snap.Period) {
+			snap.dealSpExit(header.Number,db,header.Hash())
+		}
+		calRootHash:=snap.SpData.Hash
+		if calRootHash != headerExtra.SpDataRoot {
+			err:=errors.New("SpDataRoot root hash is not same,head:" + headerExtra.SpDataRoot.String() + "cal:" + calRootHash.String())
+			log.Error("SpDataRoot root hash is not same:", "head", headerExtra.SpDataRoot.String(),"cal",calRootHash.String())
+			return calsnap, err
+		}
 	}
 	calsnap2,err2 := snap.calSRTHashVer(headerExtra.SRTDataRoot, header.Number.Uint64(), db)
 	if err2 != nil {
@@ -358,6 +502,18 @@ func (snap *Snapshot) storageApply(headerExtra HeaderExtra, header *types.Header
 	snap.updateBwPledgePayData(headerExtra.StorageBwPay,header.Number,db)
 	if header.Number.Uint64() == PosrIncentiveEffectNumber {
 		snap.adjustStorageOldPrice()
+	}
+	if isGEInitStorageManagerNumber(header.Number.Uint64()){
+		snap.updateStorageManager(headerExtra.ModifySManager,header.Number,db)
+		snap.updateCompleteSPledge(headerExtra.CompleteSPledge,header.Number,db)
+		snap.updateSPRewardRatio(headerExtra.SPRewardRatio,header.Number,db)
+		snap.updateSPPool(headerExtra.SPPool,header.Number,db)
+		snap.updateSPEPool(headerExtra.SPEPool,header.Number, db)
+		snap.updateSPMigration(headerExtra.SPMigration,header.Number,db)
+		snap.updateStorageData2(headerExtra.StoragePledge2, db)
+		snap.updateSPEntrust(headerExtra.SPEntrust,header.Number, db)
+		snap.updateSETransfer(headerExtra.SETransfer,header.Number, db)
+		snap.updateSEExit(headerExtra.SEExit,header.Number, db)
 	}
 	return snap, nil
 }
@@ -762,6 +918,33 @@ func (s *StorageData) copy() *StorageData {
 			}
 		}
 	}
+	if(s.StorageEntrust!=nil){
+		clone.StorageEntrust=make(map[common.Address]*SEntrust)
+		for address, sentrust := range s.StorageEntrust {
+			clone.StorageEntrust[address] = &SEntrust{
+				Manager:sentrust.Manager,
+				Sphash:sentrust.Sphash,
+				Spheight:new(big.Int).Set(sentrust.Spheight),
+				EntrustRate:new(big.Int).Set(sentrust.EntrustRate),
+				PledgeAmount:new(big.Int).Set(sentrust.PledgeAmount),
+				ManagerAmount:new(big.Int).Set(sentrust.ManagerAmount),
+				Managerheight:new(big.Int).Set(sentrust.Managerheight),
+				Detail:make(map[common.Hash]*SEntrustDetail),
+			}
+
+			entrustDetail := s.StorageEntrust[address].Detail
+			for hash, detail := range entrustDetail {
+				if _, ok := clone.StorageEntrust[address].Detail[hash]; !ok {
+					clone.StorageEntrust[address].Detail[hash] = &SEntrustDetail{
+						Address:detail.Address,
+						Height:new(big.Int).Set(detail.Height),
+						Amount:new(big.Int).Set(detail.Amount),
+					}
+				}
+			}
+		}
+	}
+
 	return clone
 }
 
@@ -1046,22 +1229,40 @@ func (a *Alien) storagePledgeNewExit(storagePledgeExit []SPledgeExitRecord, exch
 		return storagePledgeExit, exchangeSRT
 	}
 	pledgeAddr := common.HexToAddress(txDataInfo[3])
-	if pledgeAddr == txSender {
-		if revenue, ok := snap.RevenueStorage[pledgeAddr]; ok {
-			if revenue.RevenueAddress != txSender {
-				log.Warn("storage Pledge exit", "bind Revenue address", revenue.RevenueAddress)
+	if isGEInitStorageManagerNumber(blocknumber.Uint64()){
+		if entrustItem, ok := snap.StorageData.StorageEntrust[pledgeAddr]; ok {
+			if snap.StorageData.StorageEntrust[pledgeAddr].Manager != txSender {
+				log.Warn("isStorageManager", "txSender is not manager", txSender)
 				return storagePledgeExit, exchangeSRT
 			}
+			if entrustItem.Sphash!=common.BigToHash(common.Big0) {
+				if blocknumber.Uint64()-entrustItem.Spheight.Uint64()<= sPPoollockDay*snap.getBlockPreDay(){
+					log.Warn("storagePledgeNewExit", "sPPoollockDay not pass", sPPoollockDay)
+					return storagePledgeExit, exchangeSRT
+				}
+			}
+		}else{
+			log.Warn("storage Pledge exit", "manager is empty", pledgeAddr)
+			return storagePledgeExit, exchangeSRT
 		}
 	}else{
-		if revenue, ok := snap.RevenueStorage[pledgeAddr]; ok {
-			if revenue.RevenueAddress != txSender {
+		if pledgeAddr == txSender {
+			if revenue, ok := snap.RevenueStorage[pledgeAddr]; ok {
+				if revenue.RevenueAddress != txSender {
+					log.Warn("storage Pledge exit", "bind Revenue address", revenue.RevenueAddress)
+					return storagePledgeExit, exchangeSRT
+				}
+			}
+		}else{
+			if revenue, ok := snap.RevenueStorage[pledgeAddr]; ok {
+				if revenue.RevenueAddress != txSender {
+					log.Warn("storage Pledge exit", "txSender no role",txSender)
+					return storagePledgeExit, exchangeSRT
+				}
+			}else {
 				log.Warn("storage Pledge exit", "txSender no role",txSender)
 				return storagePledgeExit, exchangeSRT
 			}
-		}else {
-				log.Warn("storage Pledge exit", "txSender no role",txSender)
-				return storagePledgeExit, exchangeSRT
 		}
 	}
 	storagepledge := snap.StorageData.StoragePledge[pledgeAddr]
@@ -1559,7 +1760,7 @@ func (s *StorageData) updateLeaseRescind(sRescinds []LeaseRescindRecord, number 
 	s.accumulateHeaderHash()
 }
 
-func (s *StorageData) storageVerificationCheck(number uint64, blockPerday uint64, passTime *big.Int, rate uint32, revenueStorage map[common.Address]*RevenueParameter, period uint64, db ethdb.Database, basePrice *big.Int, currentLockReward []LockRewardRecord, snapTotalLeaseSpace *big.Int) ([]LockRewardRecord, []ExchangeSRTRecord, *big.Int, error, *big.Int, *big.Int) {
+func (s *StorageData) storageVerificationCheck(number uint64, blockPerday uint64, passTime *big.Int, rate uint32, revenueStorage map[common.Address]*RevenueParameter, period uint64, db ethdb.Database, basePrice *big.Int, currentLockReward []LockRewardRecord, snapTotalLeaseSpace *big.Int, spData *SpData,snap *Snapshot) ([]LockRewardRecord, []ExchangeSRTRecord, *big.Int, error, *big.Int, *big.Int) {
 
 	sussSPAddrs, sussRentHashs, storageRatios, capSuccAddrs := s.storageVerify(number, blockPerday, revenueStorage)
 
@@ -1578,7 +1779,7 @@ func (s *StorageData) storageVerificationCheck(number uint64, blockPerday uint64
 		}
 	}
 	var burnAmount *big.Int
-	revertSpaceLockReward, revertExchangeSRT,bAmount := s.dealLeaseStatus(number, rate, blockPerday)
+	revertSpaceLockReward, revertExchangeSRT,bAmount := s.dealLeaseStatus(number, rate, blockPerday, revenueStorage,snap)
 	if bAmount!=nil&&bAmount.Cmp(common.Big0)>0{
 		burnAmount=new(big.Int).Set(bAmount)
 	}
@@ -1590,15 +1791,16 @@ func (s *StorageData) storageVerificationCheck(number uint64, blockPerday uint64
 	if err!=nil{
 		return currentLockReward,nil, nil,err,nil,nil
 	}
-
-	storageRatios = s.calcStorageRatio(storageRatios,number)
-	err=s.saveStorageRatiosTodb(storageRatios, db, number)
-	if err!=nil{
-		return currentLockReward,nil, nil,err,nil,nil
+	if isLtInitStorageManagerNumber(number){
+		storageRatios = s.calcStorageRatio(storageRatios,number)
+		err=s.saveStorageRatiosTodb(storageRatios, db, number)
+		if err!=nil{
+			return currentLockReward,nil, nil,err,nil,nil
+		}
 	}
 	harvest := big.NewInt(0)
 	zero := big.NewInt(0)
-	spaceLockReward, spaceHarvest,leftAmount := s.calcStoragePledgeReward(storageRatios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db)
+	spaceLockReward, spaceHarvest,leftAmount := s.calcStoragePledgeReward(storageRatios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db,snap)
 	if leftAmount!=nil&&leftAmount.Cmp(common.Big0)>0{
 		if burnAmount==nil{
 			burnAmount=new(big.Int).Set(leftAmount)
@@ -1614,7 +1816,14 @@ func (s *StorageData) storageVerificationCheck(number uint64, blockPerday uint64
 		return currentLockReward,nil, nil,err,nil,nil
 	}
 	s.deletePasstimeLease(number, blockPerday, passTime)
-	LockLeaseReward, leaseHarvest,totalLeaseSpace := s.accumulateLeaseRewards(storageRatios, sussRentHashs, basePrice, revenueStorage,number,db,snapTotalLeaseSpace)
+	LockLeaseReward, leaseHarvest,totalLeaseSpace,feeBurnAmount := s.accumulateLeaseRewards(storageRatios, sussRentHashs, basePrice, revenueStorage,number,db,snapTotalLeaseSpace,spData,snap)
+	if feeBurnAmount!=nil&&feeBurnAmount.Cmp(common.Big0)>0{
+		if burnAmount==nil{
+			burnAmount=new(big.Int).Set(feeBurnAmount)
+		}else{
+			burnAmount=new(big.Int).Add(burnAmount,feeBurnAmount)
+		}
+	}
 	if leaseHarvest.Cmp(zero) > 0 {
 		harvest = new(big.Int).Add(harvest, leaseHarvest)
 	}
@@ -2154,15 +2363,15 @@ func (s *StorageData) calStorageLeaseNewReward(capacity decimal.Decimal, bandwid
 }
 
 func (s *StorageData) accumulateLeaseRewards( ratios map[common.Address]*StorageRatio,
-	addrs []common.Hash, basePrice *big.Int, revenueStorage map[common.Address]*RevenueParameter,blocknumber uint64, db ethdb.Database,snapTotalLeaseSpace *big.Int) ([]SpaceRewardRecord, *big.Int,*big.Int) {
+	addrs []common.Hash, basePrice *big.Int, revenueStorage map[common.Address]*RevenueParameter,blocknumber uint64, db ethdb.Database,snapTotalLeaseSpace *big.Int,spData *SpData,snap *Snapshot) ([]SpaceRewardRecord, *big.Int,*big.Int,*big.Int) {
 	if isGEPoCrsAccCalNumber(blocknumber){
-		return s.accumulateLeaseRewards2(ratios,addrs,basePrice,revenueStorage,blocknumber,db,snapTotalLeaseSpace)
+		return s.accumulateLeaseRewards2(ratios,addrs,basePrice,revenueStorage,blocknumber,db,snapTotalLeaseSpace,spData,snap)
 	}
 	var LockReward []SpaceRewardRecord
 	//basePrice := // SRT /TB.day
 	storageHarvest := big.NewInt(0)
 	if nil == addrs || len(addrs) == 0 {
-		return LockReward, storageHarvest,nil
+		return LockReward, storageHarvest,nil,nil
 	}
 	totalLeaseSpace := decimal.NewFromInt(0)//B
 	validSuccLesae := make(map[common.Hash]uint64)
@@ -2208,7 +2417,7 @@ func (s *StorageData) accumulateLeaseRewards( ratios map[common.Address]*Storage
 	if err != nil {
 		log.Error("saveleaseHarvest", "err", err, "number", blocknumber)
 	}
-	return LockReward, storageHarvest,nil
+	return LockReward, storageHarvest,nil,nil
 }
 
 func getBandwaith(bandwidth *big.Int,blockNumber uint64) decimal.Decimal {
@@ -2334,10 +2543,22 @@ func (a *Alien) exchangeStoragePrice(storageExchangePriceRecord []StorageExchang
 		return storageExchangePriceRecord
 	}
 	pledgeAddr := common.HexToAddress(txDataInfo[3])
-	if pledgeAddr != txSender {
-		if revenue, ok := snap.RevenueStorage[pledgeAddr]; !ok || revenue.RevenueAddress != txSender {
-			log.Warn("exchange   Price  of Storage  [no role]", " txSender", txSender)
+	if isGEInitStorageManagerNumber(blocknumber.Uint64()){
+		if _, ok := snap.StorageData.StorageEntrust[pledgeAddr]; ok {
+			if snap.StorageData.StorageEntrust[pledgeAddr].Manager != txSender {
+				log.Warn("isStorageManager", "txSender is not manager", txSender)
+				return storageExchangePriceRecord
+			}
+		}else{
+			log.Warn("isStorageManager", "manager is empty", pledgeAddr)
 			return storageExchangePriceRecord
+		}
+	}else{
+		if pledgeAddr != txSender {
+			if revenue, ok := snap.RevenueStorage[pledgeAddr]; !ok || revenue.RevenueAddress != txSender {
+				log.Warn("exchange   Price  of Storage  [no role]", " txSender", txSender)
+				return storageExchangePriceRecord
+			}
 		}
 	}
 	if _, ok := snap.StorageData.StoragePledge[pledgeAddr]; !ok {
@@ -2693,6 +2914,9 @@ func (s *StorageData) storageVerify(number uint64, blockPerday uint64, revenueSt
 	return sussSPAddrs, sussRentHashs, storageRatios, nil
 }
 func (s *StorageData) storageVerify2(number uint64, blockPerday uint64, revenueStorage map[common.Address]*RevenueParameter) ([]common.Address, []common.Hash, map[common.Address]*StorageRatio, map[common.Address]*big.Int) {
+	if isGEInitStorageManagerNumber(number) {
+		return s.storageVerify3(number,blockPerday,revenueStorage)
+	}
 	sussSPAddrs := make([]common.Address, 0)
 	sussRentHashs := make([]common.Hash, 0)
 	storageRatios := make(map[common.Address]*StorageRatio, 0)
@@ -2848,7 +3072,7 @@ func (s *StorageData) storageVerify2(number uint64, blockPerday uint64, revenueS
 	return sussSPAddrs, sussRentHashs, storageRatios, capSuccAddrs
 }
 
-func (s *StorageData) dealLeaseStatus(number uint64, rate uint32, blockPerday uint64) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
+func (s *StorageData) dealLeaseStatus(number uint64, rate uint32, blockPerday uint64,revenueStorage map[common.Address]*RevenueParameter,snap *Snapshot) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
 	revertLockReward := make([]SpaceRewardRecord, 0)
 	revertExchangeSRT := make([]ExchangeSRTRecord, 0)
 	delPledge := make([]common.Address, 0)
@@ -2860,7 +3084,7 @@ func (s *StorageData) dealLeaseStatus(number uint64, rate uint32, blockPerday ui
 		if sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeRemoving)) == 0 || sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeExit)) == 0 {
 			sPledgePledgeStatus:=new(big.Int).Set(sPledge.PledgeStatus)
 			sPledge.PledgeStatus = big.NewInt(SPledgeRetrun)
-			revertLockReward, revertExchangeSRT,bAmount = s.dealSPledgeRevert(revertLockReward, revertExchangeSRT, sPledge, rate, number, blockPerday,sPledgePledgeStatus,bAmount)
+			revertLockReward, revertExchangeSRT,bAmount = s.dealSPledgeRevert(revertLockReward, revertExchangeSRT, sPledge, rate, number, blockPerday,sPledgePledgeStatus,bAmount,revenueStorage,pledgeAddress,snap)
 			delPledge = append(delPledge, pledgeAddress)
 			s.accumulateSpaceHash(pledgeAddress)
 			continue
@@ -2880,14 +3104,20 @@ func (s *StorageData) dealLeaseStatus(number uint64, rate uint32, blockPerday ui
 		}
 	}
 	for _, delAddr := range delPledge {
+		if isGEInitStorageManagerNumber(number){
+			s.deleteSpCapAndRs(delAddr, snap)
+		}
 		delete(s.StoragePledge, delAddr)
+	}
+	if isGEInitStorageManagerNumber(number) {
+		snap.SpData.accumulateSpDataHash()
 	}
 	s.accumulateHeaderHash()
 	return revertLockReward, revertExchangeSRT,bAmount
 }
 
-func (s *StorageData) dealSPledgeRevert(revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, pledge *SPledge, rate uint32, number uint64, blockPerday uint64, sPledgePledgeStatus *big.Int,bAmount *big.Int) ([]SpaceRewardRecord, []ExchangeSRTRecord, *big.Int) {
-	revertLockReward, revertExchangeSRT,bAmount = s.dealSPledgeRevert2(pledge, revertLockReward, revertExchangeSRT, rate,  number, blockPerday,bAmount)
+func (s *StorageData) dealSPledgeRevert(revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, pledge *SPledge, rate uint32, number uint64, blockPerday uint64, sPledgePledgeStatus *big.Int,bAmount *big.Int,revenueStorage map[common.Address]*RevenueParameter,pledgeAddress common.Address,snap *Snapshot) ([]SpaceRewardRecord, []ExchangeSRTRecord, *big.Int) {
+	revertLockReward, revertExchangeSRT,bAmount = s.dealSPledgeRevert2(pledge, revertLockReward, revertExchangeSRT, rate,  number, blockPerday,bAmount,revenueStorage,pledgeAddress,snap)
 	leases := pledge.Lease
 	for lHash, l := range leases {
 		lStatus:=l.Status
@@ -2903,9 +3133,9 @@ func (s *StorageData) dealSPledgeRevert(revertLockReward []SpaceRewardRecord, re
 	}
 	return revertLockReward, revertExchangeSRT,bAmount
 }
-func (s *StorageData) dealSPledgeRevert2(pledge *SPledge, revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, rate uint32, number uint64, blockPerday uint64,bAmount *big.Int) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
+func (s *StorageData) dealSPledgeRevert2(pledge *SPledge, revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, rate uint32, number uint64, blockPerday uint64,bAmount *big.Int,revenueStorage map[common.Address]*RevenueParameter,pledgeAddress common.Address,snap *Snapshot) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
 	if number>SPledgeRevertFixBlockNumber{
-		return dealSPledgeRevert3(pledge, revertLockReward, revertExchangeSRT, rate, number, blockPerday,bAmount)
+		return s.dealSPledgeRevert3(pledge, revertLockReward, revertExchangeSRT, rate, number, blockPerday,bAmount,revenueStorage,pledgeAddress,snap)
 	}
 	bigNumber := new(big.Int).SetUint64(number)
 	bigblockPerDay := new(big.Int).SetUint64(blockPerday)
@@ -3044,9 +3274,9 @@ func (s *StorageData) calStorageRatio(totalCapacity *big.Int,blockNumber uint64)
 	return decimal.NewFromInt(0)
 }
 
-func (s *StorageData) calcStoragePledgeReward(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+func (s *StorageData) calcStoragePledgeReward(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database,snap *Snapshot) ([]SpaceRewardRecord, *big.Int, *big.Int) {
 	if number > PledgeRevertLockEffectNumber {
-		return s.calcStoragePledgeReward2(ratios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db)
+		return s.calcStoragePledgeReward2(ratios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db,snap)
 	}
 	reward := make([]SpaceRewardRecord, 0)
 	storageHarvest := big.NewInt(0)
@@ -3135,9 +3365,9 @@ func (s *StorageData) calcStoragePledgeReward(ratios map[common.Address]*Storage
 	return reward, storageHarvest,leftAmount
 }
 
-func (s *StorageData) calcStoragePledgeReward2(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+func (s *StorageData) calcStoragePledgeReward2(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database,snap *Snapshot) ([]SpaceRewardRecord, *big.Int, *big.Int) {
 	if isGEGrantEffectNumber(number) {
-		return s.calcStoragePledgeReward3(ratios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db)
+		return s.calcStoragePledgeReward3(ratios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db,snap)
 	}
 	reward := make([]SpaceRewardRecord, 0)
 	storageHarvest := big.NewInt(0)
@@ -3518,7 +3748,7 @@ func (s *Snapshot) storageVerificationCheck(number uint64, blockPerday uint64, d
 	if isStorageVerificationCheck(number, s.Period) {
 		passTime := new(big.Int).Mul(s.SystemConfig.Deposit[sscEnumLeaseExpires], new(big.Int).SetUint64(blockPerday))
 		basePrice := s.SystemConfig.Deposit[sscEnumStoragePrice]
-		return s.StorageData.storageVerificationCheck(number, blockPerday, passTime, s.SystemConfig.ExchRate, s.RevenueStorage, s.Period, db, basePrice, currentLockReward,s.TotalLeaseSpace)
+		return s.StorageData.storageVerificationCheck(number, blockPerday, passTime, s.SystemConfig.ExchRate, s.RevenueStorage, s.Period, db, basePrice, currentLockReward,s.TotalLeaseSpace,s.SpData,s)
 	}
 	return currentLockReward,nil, nil,nil,nil,nil
 }
@@ -3553,12 +3783,16 @@ func (s *Snapshot) calStorageVerificationCheck(roothash common.Hash, number uint
 
 func (s *StorageData) calStorageVerificationCheck(number uint64, blockPerday uint64, passTime *big.Int, revenueStorage map[common.Address]*RevenueParameter, snap *Snapshot, db ethdb.Database, header *types.Header) common.Hash {
 	s.storageVerify(number, blockPerday, revenueStorage)
-	s.calDealLeaseStatus(number,snap,db,header)
+	s.calDealLeaseStatus(number,snap,db,header,revenueStorage)
 	s.deletePasstimeLease(number, blockPerday, passTime)
 	return s.Hash
 }
 
-func (s *StorageData) calDealLeaseStatus(number uint64, snap *Snapshot, db ethdb.Database, header *types.Header) {
+func (s *StorageData) calDealLeaseStatus(number uint64, snap *Snapshot, db ethdb.Database, header *types.Header, revenueStorage map[common.Address]*RevenueParameter) {
+	if isGEInitStorageManagerNumber(number){
+		s.calDealLeaseStatus2(number,snap,db,header,revenueStorage)
+		return
+	}
 	delPledge := make([]common.Address, 0)
 	removePledge:=make([]common.Address, 0)
 	for pledgeAddress, sPledge := range s.StoragePledge {
@@ -3586,18 +3820,21 @@ func (s *StorageData) calDealLeaseStatus(number uint64, snap *Snapshot, db ethdb
 			}
 		}
 	}
+
 	for _, delAddr := range delPledge {
 		delete(s.StoragePledge, delAddr)
 	}
 	s.accumulateHeaderHash()
-
-	if number>=StoragePledgeOptEffectNumber&&len(removePledge)>0{
-		snap.setStorageRemovePunish(removePledge,number,db,header)
+	if number >= StoragePledgeOptEffectNumber && len(removePledge) > 0 {
+		snap.setStorageRemovePunish(removePledge, number, db, header)
 	}
 	return
 }
 
-func dealSPledgeRevert3(pledge *SPledge, revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, rate uint32, number uint64, blockPerday uint64,bAmount *big.Int) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
+func (s *StorageData) dealSPledgeRevert3(pledge *SPledge, revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, rate uint32, number uint64, blockPerday uint64,bAmount *big.Int,revenueStorage map[common.Address]*RevenueParameter,pledgeAddress common.Address,snap *Snapshot) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
+	if isGEInitStorageManagerNumber(number){
+		return s.dealSPledgeRevert4(pledge, revertLockReward, revertExchangeSRT, rate, number, blockPerday,bAmount,revenueStorage,pledgeAddress,snap)
+	}
 	bigNumber := new(big.Int).SetUint64(number)
 	bigblockPerDay := new(big.Int).SetUint64(blockPerday)
 	zeroTime := new(big.Int).Mul(new(big.Int).Div(bigNumber, bigblockPerDay), bigblockPerDay) //0:00 every day
@@ -4375,7 +4612,10 @@ func changeOxToUx(str string) string {
 	return "ux"+str[2:]
 }
 
-func (s *StorageData) calcStoragePledgeReward3(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+func (s *StorageData) calcStoragePledgeReward3(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database,snap *Snapshot) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+	if isGEInitStorageManagerNumber(number) {
+		return s.calcStoragePledgeReward4(ratios, revenueStorage, number, period,sussSPAddrs,capSuccAddrs,db,snap)
+	}
 	reward := make([]SpaceRewardRecord, 0)
 	storageHarvest := big.NewInt(0)
 	leftAmount:=common.Big0
@@ -4450,12 +4690,15 @@ func (s *StorageData) isSPledgeRentalThreshold(sPledge *SPledge) bool {
 }
 
 
-func (s *StorageData) accumulateLeaseRewards2(ratios map[common.Address]*StorageRatio, addrs []common.Hash, basePrice *big.Int, revenueStorage map[common.Address]*RevenueParameter, blocknumber uint64, db ethdb.Database, snapTotalLeaseSpace *big.Int) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+func (s *StorageData) accumulateLeaseRewards2(ratios map[common.Address]*StorageRatio, addrs []common.Hash, basePrice *big.Int, revenueStorage map[common.Address]*RevenueParameter, blocknumber uint64, db ethdb.Database, snapTotalLeaseSpace *big.Int,spData *SpData,snap *Snapshot) ([]SpaceRewardRecord, *big.Int, *big.Int,*big.Int) {
+	if isGEInitStorageManagerNumber(blocknumber){
+		return s.accumulateLeaseRewards3(ratios,addrs,basePrice,revenueStorage,blocknumber,db,snapTotalLeaseSpace,spData,snap)
+	}
 	var LockReward []SpaceRewardRecord
 	//basePrice := // SRT /TB.day
 	storageHarvest := big.NewInt(0)
 	if nil == addrs || len(addrs) == 0 {
-		return LockReward, storageHarvest,nil
+		return LockReward, storageHarvest,nil,nil
 	}
 	validSuccLesae := make(map[common.Hash]uint64)
 	for _, leaseHash := range addrs {
@@ -4495,7 +4738,7 @@ func (s *StorageData) accumulateLeaseRewards2(ratios map[common.Address]*Storage
 	if err != nil {
 		log.Error("saveleaseHarvest", "err", err, "number", blocknumber)
 	}
-	return LockReward, storageHarvest,totalLeaseSpace.BigInt()
+	return LockReward, storageHarvest,totalLeaseSpace.BigInt(),nil
 }
 
 
@@ -4563,4 +4806,1931 @@ func (s *StorageData) getGbUTGRate(totalLeaseSpace decimal.Decimal) decimal.Deci
 	ebReward = ebReward.Sub(beforebReward)
 	gbUTGRate := ebReward.Div(decimal.NewFromInt(1073741824))
 	return gbUTGRate
+}
+
+func (s *Snapshot) initStorageManager() {
+	s.StorageData.StorageEntrust=make(map[common.Address]*SEntrust)
+	for pledgeAddr,item:=range s.StorageData.StoragePledge {
+		s.StorageData.StorageEntrust[pledgeAddr]=&SEntrust{
+			Manager:item.Address,
+			Sphash:common.Hash{},
+			Spheight:common.Big0,
+			EntrustRate:common.Big0,
+			PledgeAmount:new(big.Int).Set(item.SpaceDeposit),
+			ManagerAmount:new(big.Int).Set(item.SpaceDeposit),
+			Managerheight:new(big.Int).Set(item.Number),
+			Detail:make(map[common.Hash]*SEntrustDetail),
+		}
+		s.StorageData.StorageEntrust[pledgeAddr].Detail[common.BytesToHash(pledgeAddr.Bytes())]=&SEntrustDetail{
+			Address:item.Address,
+			Height:new(big.Int).Set(item.Number),
+			Amount:new(big.Int).Set(item.SpaceDeposit),
+		}
+	}
+}
+
+func (a *Alien) modifyStorageManager(currentManager []ModifySManagerRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, db *state.StateDB, snap *Snapshot, number *big.Int) []ModifySManagerRecord {
+	if len(txDataInfo) <=4 {
+		log.Warn("modifyStorageManager","parameter error need 4 act",len(txDataInfo))
+		return currentManager
+	}
+	postion := 3
+	storageAddress:=common.HexToAddress(txDataInfo[postion])
+	storageNode:=snap.StorageData.StoragePledge[storageAddress]
+	if  storageNode== nil {
+		log.Warn("modifyStorageManager","storage not exit storageAddress",storageAddress)
+		return currentManager
+	}
+	storageNum:=new(big.Int).Set(storageNode.Number)
+	if isGEInitStorageManagerNumber(storageNum.Uint64()){
+		log.Warn("modifyStorageManager","storage can not change manager",storageAddress,"storageNum",storageNum)
+		return currentManager
+	}
+	if storageAddress!= txSender{
+		log.Warn("modifyStorageManager","pledge address no role",storageAddress)
+		return currentManager
+	}
+	storageNodePaddr:=storageNode.Address
+	storageEntrust:=snap.StorageData.StorageEntrust[storageAddress]
+	if storageEntrust==nil {
+		log.Warn("modifyStorageManager","storage not exit storageEntrust",storageAddress)
+		return currentManager
+	}
+	curManager:=storageEntrust.Manager
+	if curManager!=storageNodePaddr{
+		log.Warn("modifyStorageManager","pledge address has change manager already",storageAddress)
+		return currentManager
+	}
+	postion++
+	manager:=common.HexToAddress(txDataInfo[postion])
+
+	currentManager = append(currentManager, ModifySManagerRecord{
+		Pledge:storageAddress,
+		Manager:manager,
+	})
+	topics := make([]common.Hash, 3)
+	//web3.sha3("Modify Storage Manager")
+	topics[0].UnmarshalText([]byte("0xd88e4545d35bedc1b14e926ef55b18780759fb1559dfdaf43c24386ddece40b0"))
+	topics[1].SetBytes(storageAddress.Bytes())
+	topics[2].SetBytes(manager.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics,nil)
+	return currentManager
+}
+
+func (s *Snapshot) updateStorageManager(modifySManagerRecord []ModifySManagerRecord, number *big.Int, db ethdb.Database) {
+	if modifySManagerRecord== nil || len(modifySManagerRecord)==0 {
+		return
+	}
+	for  _,modifySManager :=range modifySManagerRecord {
+		if _,ok:=s.StorageData.StorageEntrust[modifySManager.Pledge];ok{
+			s.StorageData.StorageEntrust[modifySManager.Pledge].Manager=modifySManager.Manager
+		}
+	}
+}
+
+func (a *Alien) completeStoragePledge(currentCSPledge []CompleteSPledgeRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int) []CompleteSPledgeRecord {
+	if len(txDataInfo) <= 4 {
+		log.Warn("completeStoragePledge", "parameter number", len(txDataInfo))
+		return currentCSPledge
+	}
+	completeSPledge := CompleteSPledgeRecord{
+		Pledge:        common.Address{},
+		Amount: common.Big0,
+		Hash:    tx.Hash(),
+	}
+	postion := 3
+	if err := completeSPledge.Pledge.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("completeSPledge", "Pledge", txDataInfo[postion])
+		return currentCSPledge
+	}
+	if _, ok := snap.StorageData.StorageEntrust[completeSPledge.Pledge]; ok {
+		if snap.StorageData.StorageEntrust[completeSPledge.Pledge].Manager != txSender {
+			log.Warn("completeSPledge", "txSender is not manager", txSender)
+			return currentCSPledge
+		}
+	}else{
+		log.Warn("completeSPledge", "manager is empty", completeSPledge.Pledge)
+		return currentCSPledge
+	}
+	postion++
+	if amount, err := decimal.NewFromString(txDataInfo[postion]); err != nil {
+		log.Warn("completeSPledge", "amount", txDataInfo[postion])
+		return currentCSPledge
+	} else {
+		if amount.Cmp(decimal.Zero)<0{
+			log.Warn("completeSPledge", "amount small than 0", txDataInfo[postion])
+			return currentCSPledge
+		}
+		amountBig:=amount.BigInt()
+		if amountBig.Cmp(common.Big0)<0{
+			log.Warn("completeSPledge", "amountBig small than 0", txDataInfo[postion])
+			return currentCSPledge
+		}
+
+		completeSPledge.Amount = amount.BigInt()
+		modValue:=new(big.Int).Mod(completeSPledge.Amount,utgOneValue)
+		if modValue.Cmp(common.Big0) !=0 {
+			log.Warn("completeSPledge", "amount must rounding ", txDataInfo[postion])
+			return currentCSPledge
+		}
+	}
+	if _, ok := snap.StorageData.StoragePledge[completeSPledge.Pledge]; ok {
+		spaceDeposit:=new(big.Int).Set(snap.StorageData.StoragePledge[completeSPledge.Pledge].SpaceDeposit)
+		addAmount:=new(big.Int).Add(snap.StorageData.StorageEntrust[completeSPledge.Pledge].PledgeAmount,completeSPledge.Amount)
+		for _,item:=range currentCSPledge{
+			if item.Pledge==completeSPledge.Pledge{
+				addAmount=new(big.Int).Add(addAmount,item.Amount)
+			}
+		}
+		if addAmount.Cmp(spaceDeposit)>0 {
+			log.Warn("completeSPledge", "pledgeAmount is too big", completeSPledge.Amount)
+			return currentCSPledge
+		}
+	}else{
+		log.Warn("completeSPledge", "StoragePledge is empty", completeSPledge.Pledge)
+		return currentCSPledge
+	}
+
+	if state.GetBalance(txSender).Cmp(completeSPledge.Amount) < 0 {
+		log.Warn("completeSPledge", "balance", state.GetBalance(txSender))
+		return currentCSPledge
+	}
+	state.SetBalance(txSender, new(big.Int).Sub(state.GetBalance(txSender), completeSPledge.Amount))
+	topics := make([]common.Hash, 3)
+	//web3.sha3("Complete storage pledge")
+	topics[0].UnmarshalText([]byte("0x3f9d7503e51b1d0f990bf7c7998dd0c3f978a730fcb972a08664a34a1ea4e029"))
+	topics[1].SetBytes(completeSPledge.Pledge.Bytes())
+	topics[2].SetBytes(completeSPledge.Amount.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	currentCSPledge = append(currentCSPledge, completeSPledge)
+	return currentCSPledge
+}
+
+func (s *Snapshot) updateCompleteSPledge(completeSPledgeRecord []CompleteSPledgeRecord, number *big.Int, db ethdb.Database) {
+	if completeSPledgeRecord== nil || len(completeSPledgeRecord)==0 {
+		return
+	}
+	for  _,completeSPledge :=range completeSPledgeRecord {
+		if _,ok:=s.StorageData.StorageEntrust[completeSPledge.Pledge];ok{
+			pledgeAmount:=new(big.Int).Add(s.StorageData.StorageEntrust[completeSPledge.Pledge].PledgeAmount,completeSPledge.Amount)
+			s.StorageData.StorageEntrust[completeSPledge.Pledge].PledgeAmount=pledgeAmount
+			s.StorageData.StorageEntrust[completeSPledge.Pledge].Detail[completeSPledge.Hash]=&SEntrustDetail{
+				Address:s.StorageData.StorageEntrust[completeSPledge.Pledge].Manager,
+				Height:new(big.Int).Set(number),
+				Amount:completeSPledge.Amount,
+			}
+			s.StorageData.StorageEntrust[completeSPledge.Pledge].ManagerAmount=new(big.Int).Add(s.StorageData.StorageEntrust[completeSPledge.Pledge].ManagerAmount,completeSPledge.Amount)
+			s.StorageData.StorageEntrust[completeSPledge.Pledge].Managerheight=new(big.Int).Set(number)
+			spaceDeposit:=s.StorageData.StoragePledge[completeSPledge.Pledge].SpaceDeposit
+			if pledgeAmount.Cmp(spaceDeposit)>=0{
+				if s.StorageData.StoragePledge[completeSPledge.Pledge].PledgeStatus.Cmp(big.NewInt(SPledgeInactive))==0{
+					s.StorageData.StoragePledge[completeSPledge.Pledge].PledgeStatus=big.NewInt(SPledgeNormal)
+				}
+			}
+		}
+	}
+}
+
+
+func (a *Alien) storageSetRewardRatio(currentRatio []SPRewardRatioRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int) []SPRewardRatioRecord {
+	if len(txDataInfo) <=4 {
+		log.Warn("storageSetRewardRatio", "parameter number", len(txDataInfo))
+		return currentRatio
+	}
+	sPRewardRatio := SPRewardRatioRecord{
+		Pledge:        common.Address{},
+		Rate: common.Big0,
+	}
+	postion := 3
+	if err := sPRewardRatio.Pledge.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("storageSetRewardRatio", "Pledge", txDataInfo[postion])
+		return currentRatio
+	}
+	if _, ok := snap.StorageData.StorageEntrust[sPRewardRatio.Pledge]; ok {
+		if snap.StorageData.StorageEntrust[sPRewardRatio.Pledge].Manager != txSender {
+			log.Warn("storageSetRewardRatio", "txSender is not manager", txSender)
+			return currentRatio
+		}
+	}else{
+		log.Warn("storageSetRewardRatio", "manager is empty", sPRewardRatio.Pledge)
+		return currentRatio
+	}
+	postion++
+	if rate, err := decimal.NewFromString(txDataInfo[postion]); err != nil {
+		log.Warn("storageSetRewardRatio", "rate", txDataInfo[postion])
+		return currentRatio
+	} else {
+		rateBig:=rate.BigInt()
+		if rateBig.Cmp(common.Big0)<0{
+			log.Warn("storageSetRewardRatio", "rate small than 0", txDataInfo[postion])
+			return currentRatio
+		}
+		if rateBig.Cmp(sPDistributionDefaultRate)>0{
+			log.Warn("storageSetRewardRatio", "rate is too big", rateBig)
+			return currentRatio
+		}
+		sPRewardRatio.Rate = rateBig
+	}
+	if sp, ok := snap.StorageData.StoragePledge[sPRewardRatio.Pledge]; ok {
+		if sp.PledgeStatus.Cmp(big.NewInt(SPledgeNormal))!=0 &&sp.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))!=0{
+			log.Warn("storageSetRewardRatio", "pledgeStatus is not normal or inactive", sPRewardRatio.Pledge)
+			return currentRatio
+		}
+	}else{
+		log.Warn("storageSetRewardRatio", "StoragePledge is empty", sPRewardRatio.Pledge)
+		return currentRatio
+	}
+
+	topics := make([]common.Hash, 3)
+	//web3.sha3("storage Set reward ratio")
+	topics[0].UnmarshalText([]byte("0xb50c03de89e6521a1074a15148f92448e99b11ab80923be2516c81072b8cef0d"))
+	topics[1].SetBytes(sPRewardRatio.Pledge.Bytes())
+	topics[2].SetBytes(sPRewardRatio.Rate.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	currentRatio = append(currentRatio, sPRewardRatio)
+	return currentRatio
+}
+
+func (s *Snapshot) updateSPRewardRatio(sPRewardRatioRecord []SPRewardRatioRecord, number *big.Int, db ethdb.Database) {
+	if sPRewardRatioRecord== nil || len(sPRewardRatioRecord)==0 {
+		return
+	}
+	for  _,sPRewardRatio :=range sPRewardRatioRecord {
+		if _,ok:=s.StorageData.StorageEntrust[sPRewardRatio.Pledge];ok{
+			s.StorageData.StorageEntrust[sPRewardRatio.Pledge].EntrustRate=new(big.Int).Set(sPRewardRatio.Rate)
+		}
+	}
+}
+
+func (a *Alien) storageSetStoragePools(currentSPPool []SPPoolRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int) []SPPoolRecord {
+	if len(txDataInfo) <=4 {
+		log.Warn("storageSetStoragePools", "parameter number", len(txDataInfo))
+		return currentSPPool
+	}
+	sPPool := SPPoolRecord{
+		Pledge:        common.Address{},
+		Hash: common.Hash{},
+	}
+	postion := 3
+	if err := sPPool.Pledge.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("storageSetStoragePools", "Pledge", txDataInfo[postion])
+		return currentSPPool
+	}
+	if _, ok := snap.StorageData.StorageEntrust[sPPool.Pledge]; ok {
+		if snap.StorageData.StorageEntrust[sPPool.Pledge].Manager != txSender {
+			log.Warn("storageSetStoragePools", "txSender is not manager", txSender)
+			return currentSPPool
+		}
+	}else{
+		log.Warn("storageSetStoragePools", "manager is empty", sPPool.Pledge)
+		return currentSPPool
+	}
+	postion++
+	sPPool.Hash = common.HexToHash(txDataInfo[postion])
+	if _, ok := snap.SpData.PoolPledge[sPPool.Hash]; ok {
+
+	}else{
+		log.Warn("storageSetStoragePools", "StoragePledge is empty", sPPool.Pledge)
+		return currentSPPool
+	}
+
+	if se, ok := snap.StorageData.StorageEntrust[sPPool.Pledge]; ok {
+		nilHash := common.Hash{}
+		if se.Sphash!=nilHash {
+			spheight:=se.Spheight
+			if number.Uint64()-spheight.Uint64()<= sPPoollockDay*snap.getBlockPreDay(){
+				log.Warn("storageSetStoragePools", "sPPoollockDay not pass", sPPool.Pledge)
+				return currentSPPool
+			}
+			if se.Sphash==sPPool.Hash {
+				log.Warn("storageSetStoragePools", "address is in target pool", sPPool.Pledge)
+				return currentSPPool
+			}
+		}
+	}else{
+		log.Warn("storageSetStoragePools", "StoragePledge is empty", sPPool.Pledge)
+		return currentSPPool
+	}
+	if sp, ok := snap.SpData.PoolPledge[sPPool.Hash]; ok {
+		if sp.Status!=spStatusActive{
+			log.Warn("storageSetStoragePools", "pool is not active", sPPool.Hash)
+			return currentSPPool
+		}
+	}else{
+		log.Warn("storageSetStoragePools", "pool is empty", sPPool.Hash)
+		return currentSPPool
+	}
+	if _, ok := snap.StorageData.StoragePledge[sPPool.Pledge]; ok {
+		if snap.StorageData.StoragePledge[sPPool.Pledge].PledgeStatus.Cmp(big.NewInt(SPledgeNormal))!=0 {
+			log.Warn("storageSetStoragePools", "pledgeStatus is not normal", sPPool.Pledge)
+			return currentSPPool
+		}
+		sCapacity:=new(big.Int).Set(snap.StorageData.StoragePledge[sPPool.Pledge].TotalCapacity)
+		poolTotalCapacity:=new(big.Int).Set(snap.SpData.PoolPledge[sPPool.Hash].TotalCapacity)
+		usedCapacity:=new(big.Int).Set(snap.SpData.PoolPledge[sPPool.Hash].UsedCapacity)
+		addCapacity:=new(big.Int).Add(sCapacity,usedCapacity)
+		for _,item:=range currentSPPool{
+			if item.Hash==sPPool.Hash{
+				otherSCapacity:=new(big.Int).Set(snap.StorageData.StoragePledge[item.Pledge].TotalCapacity)
+				addCapacity=new(big.Int).Add(addCapacity,otherSCapacity)
+			}
+		}
+		if addCapacity.Cmp(poolTotalCapacity)>0{
+			log.Warn("storageSetStoragePools", "capacity oversize", sPPool.Pledge)
+			return currentSPPool
+		}
+	}else{
+		log.Warn("storageSetStoragePools", "StoragePledge is empty", sPPool.Pledge)
+		return currentSPPool
+	}
+	topics := make([]common.Hash, 3)
+	//web3.sha3("Setting Up Storage Pools")
+	topics[0].UnmarshalText([]byte("0xac69a6e8c79546d40bdef6496045dbec819d23213cd31f50e1a8d04c7b3c34b7"))
+	topics[1].SetBytes(sPPool.Pledge.Bytes())
+	topics[2].SetBytes(sPPool.Hash.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	currentSPPool = append(currentSPPool, sPPool)
+	return currentSPPool
+}
+
+
+func (s *Snapshot) updateSPPool(sPPoolRecord []SPPoolRecord, number *big.Int, db ethdb.Database) {
+	if sPPoolRecord== nil || len(sPPoolRecord)==0 {
+		return
+	}
+	for  _,sPPool :=range sPPoolRecord {
+		if _,ok:=s.StorageData.StoragePledge[sPPool.Pledge];ok{
+			totalCapacity:=new(big.Int).Set(s.StorageData.StoragePledge[sPPool.Pledge].TotalCapacity)
+			if _,ok2:=s.StorageData.StorageEntrust[sPPool.Pledge];ok2{
+				oldSphash:=s.StorageData.StorageEntrust[sPPool.Pledge].Sphash
+				s.StorageData.StorageEntrust[sPPool.Pledge].Sphash=sPPool.Hash
+				s.StorageData.StorageEntrust[sPPool.Pledge].Spheight=new(big.Int).Set(number)
+				if _,ok3:=s.SpData.PoolPledge[oldSphash];ok3{
+					s.SpData.PoolPledge[oldSphash].UsedCapacity=new(big.Int).Sub(s.SpData.PoolPledge[oldSphash].UsedCapacity,totalCapacity)
+					s.SpData.accumulateSpPledgelHash(oldSphash,false)
+				}
+				if _,ok4:=s.SpData.PoolPledge[sPPool.Hash];ok4{
+					s.SpData.PoolPledge[sPPool.Hash].UsedCapacity=new(big.Int).Add(s.SpData.PoolPledge[sPPool.Hash].UsedCapacity,totalCapacity)
+					s.SpData.accumulateSpPledgelHash(sPPool.Hash,false)
+				}
+			}
+		}
+
+	}
+	s.SpData.accumulateSpDataHash()
+}
+
+func (a *Alien) storageMigration(currentMigration []SPMigrationRecord, currentLockReward []LockRewardRecord, currentExchangeSRT []ExchangeSRTRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int, chain consensus.ChainHeaderReader) ([]SPMigrationRecord, []LockRewardRecord, []ExchangeSRTRecord) {
+	if len(txDataInfo) <=8 {
+		log.Warn("storageMigration", "parameter error len=", len(txDataInfo))
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	postion := 3
+	peledgeAddr := common.HexToAddress(txDataInfo[postion])
+	if _, ok := snap.StorageData.StoragePledge[peledgeAddr]; !ok {
+		log.Warn("storageMigration", " peledgeAddr is not exist", peledgeAddr)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	if _, ok := snap.StorageData.StorageEntrust[peledgeAddr]; !ok {
+		log.Warn("storageMigration", " StorageEntrust is not exist", peledgeAddr)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	for _,item:=range currentMigration{
+		if item.Pledge==peledgeAddr{
+			log.Warn("storageMigration", " peledgeAddr is in exit", peledgeAddr)
+			return currentMigration, currentLockReward, currentExchangeSRT
+		}
+	}
+	manager:=snap.StorageData.StorageEntrust[peledgeAddr].Manager
+	if txSender!=manager{
+		log.Warn("storageMigration", " txSender is not manager", manager)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	postion++
+	storageCapacity, err := decimal.NewFromString(txDataInfo[postion])
+	if err != nil {
+		log.Warn("storageMigration", "storageCapacity", txDataInfo[postion])
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	totalCapacity:=snap.StorageData.StoragePledge[peledgeAddr].TotalCapacity
+	if totalCapacity.Cmp(storageCapacity.BigInt())!=0{
+		log.Warn("storageMigration", "storageCapacity not equal", txDataInfo[postion])
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	maxPledgeCapacity:=maxPledgeStorageCapacityV2
+	if storageCapacity.Cmp(minPledgeStorageCapacity)<0 ||storageCapacity.Cmp(maxPledgeCapacity)>0{
+		log.Warn("storageMigration", "storageCapacity",storageCapacity,"minPledgeStorageCapacity",minPledgeStorageCapacity,"maxPledgeStorageCapacity",maxPledgeStorageCapacity)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	postion++
+	startPkNumber := txDataInfo[postion]
+	postion++
+	pkNonce,err:= decimal.NewFromString(txDataInfo[postion])
+	if err!=nil {
+		log.Warn("storageMigration", "pkNonce",txDataInfo[postion])
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	postion++
+	pkBlockHash := txDataInfo[postion]
+	postion++
+	verifyData := txDataInfo[postion]
+	verifyType :=""
+	if strings.HasPrefix(verifyData,"v1"){
+		verifyType="v1"
+		verifyData=verifyData[3:]
+	}
+	verifyDataArr := strings.Split(verifyData, ",")
+	if len(verifyDataArr)<10    {
+		log.Warn("storageMigration verifyData format error", "verifyData", verifyData,"verifyDataArr",verifyDataArr)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	pkHeader := chain.GetHeaderByHash(common.HexToHash(pkBlockHash))
+	if pkHeader == nil {
+		log.Warn("storageMigration", "pkBlockHash is not exist", pkBlockHash)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	if verifyDataArr[4] != storageBlockSize {
+		log.Warn("storageMigration storageBlockSize error", "storageBlockSize", storageBlockSize, "verifyDataArr[4]", verifyDataArr[4])
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	if pkHeader.Number.String() != startPkNumber || pkHeader.Nonce.Uint64() != pkNonce.BigInt().Uint64() {
+		log.Warn("storageMigration  packege param compare error", "startPkNumber", startPkNumber, "pkNonce", pkNonce, "pkBlockHash", pkBlockHash, " chain", pkHeader.Number)
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	rootHash := verifyDataArr[len(verifyDataArr)-1]
+	if verifyType == "v1" {
+		if !verifyPocStringV1(startPkNumber, txDataInfo[6], pkBlockHash, txDataInfo[8], rootHash, txDataInfo[3]) {
+			log.Warn("storageMigration  verifyPoc Faild", "startPkNumber", startPkNumber, "pkNonce", pkNonce, "pkBlockHash", pkBlockHash)
+			return currentMigration, currentLockReward, currentExchangeSRT
+		}
+	}else{
+		if !verifyPocString(startPkNumber, txDataInfo[6], pkBlockHash, verifyData, rootHash, txDataInfo[3]) {
+			log.Warn("storageMigration  verifyPoc Faild", "startPkNumber", startPkNumber, "pkNonce", pkNonce, "pkBlockHash", pkBlockHash)
+			return currentMigration, currentLockReward, currentExchangeSRT
+		}
+	}
+
+	storageSize, err := decimal.NewFromString(verifyDataArr[4])
+	if err != nil ||storageSize.Cmp(decimal.Zero) <=0{
+		log.Warn("storageMigration storageSize format error", "storageSize", verifyDataArr[4])
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+
+	blocknum, err := decimal.NewFromString(verifyDataArr[5])
+	if err != nil ||blocknum.Cmp(decimal.Zero) <=0{
+		log.Warn("storageMigration blocknum format error", "blocknum", verifyDataArr[5])
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+	actblocknum :=storageCapacity.Div(storageSize)
+	if actblocknum.Cmp(blocknum) != 0{
+		log.Warn("storageMigration storageCapacity not same in verify","actblocknum",actblocknum, "blocknum", blocknum.Mul(storageSize))
+		return currentMigration, currentLockReward, currentExchangeSRT
+	}
+
+	leases := snap.StorageData.StoragePledge[peledgeAddr].Lease
+	if leases!=nil{
+       for lhash,lease:=range leases{
+		   if lease.Status == LeaseReturn ||lease.Status ==LeaseNotPledged{
+			   continue
+		   }
+		   leaseStatus:=LeaseUserRescind
+		   if lease.Status == LeaseNormal || lease.Status == LeaseBreach {
+			   leaseLists := lease.LeaseList
+			   expireNumber := big.NewInt(0)
+			   for ldhash, leaseDetail := range leaseLists {
+				   deposit := leaseDetail.Deposit
+				   if deposit.Cmp(big.NewInt(0)) > 0 {
+					   startTime := leaseDetail.StartTime
+					   duration := leaseDetail.Duration
+					   leaseDetailEndNumber := new(big.Int).Add(startTime, new(big.Int).Mul(duration, new(big.Int).SetUint64(snap.getBlockPreDay())))
+					   if ldhash!=lhash{
+						   leaseDetailEndNumber=new(big.Int).Sub(leaseDetailEndNumber,common.Big1)
+					   }
+					   if expireNumber.Cmp(leaseDetailEndNumber) < 0 {
+						   expireNumber = leaseDetailEndNumber
+					   }
+				   }
+			   }
+			   if expireNumber.Cmp(number) <= 0 {
+				   leaseStatus = LeaseExpiration
+			   }
+		   }
+		   revertLockReward := make([]SpaceRewardRecord, 0)
+		   revertExchangeSRT := make([]ExchangeSRTRecord, 0)
+		   bAmount:=common.Big0
+		   revertLockReward, revertExchangeSRT,bAmount = snap.StorageData.dealLeaseRevert(lease, revertLockReward, revertExchangeSRT, snap.SystemConfig.ExchRate,leaseStatus,number.Uint64(),lhash,snap.getBlockPreDay(),bAmount)
+		   for _,item:= range revertLockReward{
+			   currentLockReward=append(currentLockReward,LockRewardRecord{
+				   Target:  item.Target,
+				   Amount :item.Amount,
+				   IsReward :sscEnumStoragePledgeRedeemLock,
+			   })
+		   }
+		   if len(revertExchangeSRT)>0 {
+			   currentExchangeSRT = append(currentExchangeSRT, revertExchangeSRT...)
+		   }
+		   if bAmount != nil && bAmount.Cmp(common.Big0) > 0 {
+			   state.AddBalance(common.BigToAddress(big.NewInt(0)), bAmount)
+		   }
+       }
+	}
+
+	migration:=SPMigrationRecord{
+		Pledge:peledgeAddr,
+		RootHash:common.HexToHash(rootHash),
+	}
+	topics := make([]common.Hash, 2)
+	//web3.sha3("Storage Migration")
+	topics[0].UnmarshalText([]byte("0x0d8986f9238b0afa7af83a2a2bf2696611ec35e24572634ff99aad5eb62e30d4"))
+	topics[1].SetBytes(peledgeAddr.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	currentMigration = append(currentMigration, migration)
+	return currentMigration, currentLockReward, currentExchangeSRT
+}
+
+func (s *Snapshot) updateSPMigration(migrationRecord []SPMigrationRecord, number *big.Int, db ethdb.Database) {
+	if migrationRecord == nil || len(migrationRecord) == 0 {
+		return
+	}
+	for _, record := range migrationRecord {
+		if _,ok:=s.StorageData.StoragePledge[record.Pledge];ok{
+			storageFile := make(map[common.Hash]*StorageFile)
+			storageCapacity:=s.StorageData.StoragePledge[record.Pledge].TotalCapacity
+			storageFile[record.RootHash] = &StorageFile{
+				Capacity:                    new(big.Int).Set(storageCapacity),
+				CreateTime:                  new(big.Int).Set(number),
+				LastVerificationTime:        new(big.Int).Set(number),
+				LastVerificationSuccessTime: new(big.Int).Set(number),
+				ValidationFailureTotalTime:  big.NewInt(0),
+			}
+			storageSpaces:=s.StorageData.StoragePledge[record.Pledge].StorageSpaces
+			space := &SPledgeSpaces{
+				Address:                     storageSpaces.Address,
+				StorageCapacity:             new(big.Int).Set(storageCapacity),
+				RootHash:                    record.RootHash,
+				StorageFile:                 storageFile,
+				LastVerificationTime:        new(big.Int).Set(number),
+				LastVerificationSuccessTime: new(big.Int).Set(number),
+				ValidationFailureTotalTime:  big.NewInt(0),
+			}
+			oldStoragePledge :=s.StorageData.StoragePledge[record.Pledge]
+			storagepledge := &SPledge{
+				Address:                     oldStoragePledge.Address,
+				StorageSpaces:               space,
+				Number:                      new(big.Int).Set(oldStoragePledge.Number),
+				TotalCapacity:               new(big.Int).Set(storageCapacity),
+				Price:                       new(big.Int).Set(oldStoragePledge.Price),
+				StorageSize:                 new(big.Int).Set(oldStoragePledge.StorageSize),
+				SpaceDeposit:                new(big.Int).Set(oldStoragePledge.SpaceDeposit),
+				Lease:                       make(map[common.Hash]*Lease),
+				LastVerificationTime:        new(big.Int).Set(number),
+				LastVerificationSuccessTime: new(big.Int).Set(number),
+				ValidationFailureTotalTime:  big.NewInt(0),
+				PledgeStatus:                big.NewInt(SPledgeNormal),
+				Bandwidth:                   new(big.Int).Set(oldStoragePledge.Bandwidth),
+			}
+			if oldStoragePledge.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))==0{
+				storagepledge.PledgeStatus=big.NewInt(SPledgeInactive)
+			}
+			s.StorageData.StoragePledge[record.Pledge] = storagepledge
+			s.StorageData.accumulateSpaceStorageFileHash(record.Pledge, storageFile[record.RootHash]) //update file -->  space -- pledge
+		}
+	}
+	s.StorageData.accumulateHeaderHash() //update all  to header valid root
+}
+
+func (a *Alien) declareStoragePledge2(currStoragePledge2 []SPledge2Record, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, blocknumber *big.Int, chain consensus.ChainHeaderReader) []SPledge2Record {
+	if len(txDataInfo) < 13 {
+		log.Warn("declareStoragePledge2", "parameter error len=", len(txDataInfo))
+		return currStoragePledge2
+	}
+	peledgeAddr := common.HexToAddress(txDataInfo[3])
+	if _, ok := snap.StorageData.StoragePledge[peledgeAddr]; ok {
+		log.Warn("Storage Pledge2 repeat", " peledgeAddr", peledgeAddr)
+		return currStoragePledge2
+	}
+	var bigPrice *big.Int
+	if price, err := decimal.NewFromString(txDataInfo[4]); err != nil {
+		log.Warn("Storage Pledge2 price wrong", "price", txDataInfo[4])
+		return currStoragePledge2
+	} else {
+		bigPrice = price.BigInt()
+	}
+	basePrice:= decimal.NewFromBigInt(snap.SystemConfig.Deposit[sscEnumStoragePrice],0)
+	minPrice:=basePrice.BigInt()
+	maxPrice:=basePrice.Mul(decimal.NewFromInt(10)).BigInt()
+	minPrice =(basePrice.Mul(decimal.NewFromFloat(0.1))).BigInt()
+	if bigPrice.Cmp(minPrice) < 0 || bigPrice.Cmp(maxPrice) > 0 {
+		log.Warn("price is set too high 2", " price", bigPrice)
+		return currStoragePledge2
+	}
+	storageCapacity, err := decimal.NewFromString(txDataInfo[5])
+	if err != nil {
+		log.Warn("Storage Pledge2 storageCapacity format error", "storageCapacity", txDataInfo[5])
+		return currStoragePledge2
+	}
+	maxPledgeCapacity:=maxPledgeStorageCapacity
+	maxPledgeCapacity=maxPledgeStorageCapacityV2
+	if storageCapacity.Cmp(minPledgeStorageCapacity)<0 ||storageCapacity.Cmp(maxPledgeCapacity)>0{
+		log.Warn("Storage Pledge2 storageCapacity error", "storageCapacity",storageCapacity,"minPledgeStorageCapacity",minPledgeStorageCapacity,"maxPledgeStorageCapacity",maxPledgeStorageCapacity)
+		return currStoragePledge2
+	}
+	startPkNumber := txDataInfo[6]
+	pkNonce,err:= decimal.NewFromString(txDataInfo[7])
+	if err!=nil {
+		log.Warn("Storage Pledge2 package nonce error", "pkNonce",txDataInfo[7])
+		return currStoragePledge2
+	}
+	pkBlockHash := txDataInfo[8]
+	verifyData := txDataInfo[9]
+	verifyType :=""
+	if strings.HasPrefix(verifyData,"v1"){
+		verifyType="v1"
+		verifyData=verifyData[3:]
+	}
+	verifyDataArr := strings.Split(verifyData, ",")
+	if len(verifyDataArr)<10    {
+		log.Warn("Storage Pledge2 verifyData format error", "verifyData", verifyData,"verifyDataArr",verifyDataArr)
+		return currStoragePledge2
+	}
+
+	pkHeader := chain.GetHeaderByHash(common.HexToHash(pkBlockHash))
+	if pkHeader == nil {
+		log.Warn("Storage Pledge2", "pkBlockHash is not exist", pkBlockHash)
+		return currStoragePledge2
+	}
+	if verifyDataArr[4] != storageBlockSize {
+		log.Warn("Storage Pledge2 storageBlockSize error", "storageBlockSize", storageBlockSize, "verifyDataArr[4]", verifyDataArr[4])
+		return currStoragePledge2
+	}
+	if pkHeader.Number.String() != startPkNumber || pkHeader.Nonce.Uint64() != pkNonce.BigInt().Uint64() {
+		log.Warn("Storage Pledge2  packege param compare error", "startPkNumber", startPkNumber, "pkNonce", pkNonce, "pkBlockHash", pkBlockHash, " chain", pkHeader.Number)
+		return currStoragePledge2
+	}
+
+	rootHash := verifyDataArr[len(verifyDataArr)-1]
+	if verifyType == "v1" {
+		if !verifyPocStringV1(startPkNumber, txDataInfo[7], pkBlockHash, txDataInfo[9], rootHash, txDataInfo[3]) {
+			log.Warn("Storage Pledge2  verifyPoc Faild", "startPkNumber", startPkNumber, "pkNonce", pkNonce, "pkBlockHash", pkBlockHash)
+			return currStoragePledge2
+		}
+	}else{
+		if !verifyPocString(startPkNumber, txDataInfo[7], pkBlockHash, verifyData, rootHash, txDataInfo[3]) {
+			log.Warn("Storage Pledge2  verifyPoc Faild", "startPkNumber", startPkNumber, "pkNonce", pkNonce, "pkBlockHash", pkBlockHash)
+			return currStoragePledge2
+		}
+	}
+
+	storageSize, err := decimal.NewFromString(verifyDataArr[4])
+	if err != nil ||storageSize.Cmp(decimal.Zero) <=0{
+		log.Warn("Storage Pledge2 storageSize format error", "storageSize", verifyDataArr[4])
+		return currStoragePledge2
+	}
+
+	blocknum, err := decimal.NewFromString(verifyDataArr[5])
+	if err != nil ||blocknum.Cmp(decimal.Zero) <=0{
+		log.Warn("Storage Pledge2 blocknum format error", "blocknum", verifyDataArr[5])
+		return currStoragePledge2
+	}
+	actblocknum :=storageCapacity.Div(storageSize)
+	if actblocknum.Cmp(blocknum) != 0{
+		log.Warn("Storage Pledge2 storageCapacity not same in verify","actblocknum",actblocknum, "blocknum", blocknum.Mul(storageSize))
+		return currStoragePledge2
+	}
+
+
+	bandwidth, err := decimal.NewFromString(txDataInfo[10])
+
+	if err != nil || bandwidth.BigInt().Cmp(big.NewInt(0)) <= 0 {
+		log.Warn("Storage Pledge2  bandwidth error", "bandwidth", bandwidth)
+		return currStoragePledge2
+	}
+
+	if err := a.checkPledgeMaxStorageSpace2(currStoragePledge2,peledgeAddr,snap,blocknumber,storageCapacity.BigInt()); err != nil {
+		log.Warn("Storage Pledge2", "checkRevenueStorageBind", err.Error())
+		return currStoragePledge2
+	}
+	totalStorage := big.NewInt(0)
+	for _, spledge := range snap.StorageData.StoragePledge {
+		totalStorage = new(big.Int).Add(totalStorage, spledge.TotalCapacity)
+	}
+	pledgeAllAmount := getSotragePledgeAmount(storageCapacity, bandwidth , decimal.NewFromBigInt(totalStorage,0), blocknumber,snap)
+	pledgeRateDec, err := decimal.NewFromString(txDataInfo[11])
+	if err != nil || pledgeRateDec.BigInt().Cmp(MinimumThresholdForPledgeAmount) <0 || pledgeRateDec.BigInt().Cmp(big.NewInt(100))>0 {
+		log.Warn("Storage Pledge2  pledgeRate error", "pledgeRate", txDataInfo[11])
+		return currStoragePledge2
+	}
+	pledgeRate :=pledgeRateDec.BigInt()
+	pledgeAmount :=pledgeAllAmount
+	if pledgeRate.Cmp(big.NewInt(100))<0{
+		leftPer:=new(big.Int).Sub(big.NewInt(100),pledgeRate)
+		leftAmount:=new(big.Int).Mul(pledgeAllAmount,leftPer)
+		leftAmount=new(big.Int).Div(leftAmount,big.NewInt(100))
+		leftMod:=new(big.Int).Mod(leftAmount,utgOneValue)
+		leftAmount=new(big.Int).Sub(leftAmount,leftMod)
+		pledgeAmount =new(big.Int).Sub(pledgeAllAmount,leftAmount)
+	}
+
+
+	entrustRate, err := decimal.NewFromString(txDataInfo[12])
+	if err != nil || entrustRate.BigInt().Cmp(big.NewInt(0)) < 0{
+		log.Warn("Storage Pledge2  entrustRate error", "entrustRate", entrustRate)
+		return currStoragePledge2
+	}
+	entrustRateBig:=entrustRate.BigInt()
+	if entrustRateBig.Cmp(sPDistributionDefaultRate)>0{
+		log.Warn("Storage Pledge2  entrustRate error", "entrustRate is too big", entrustRateBig)
+		return currStoragePledge2
+	}
+
+	if state.GetBalance(txSender).Cmp(pledgeAmount) < 0 {
+		log.Warn("Claimed sotrage2", "balance", state.GetBalance(txSender),"need",pledgeAmount)
+		return currStoragePledge2
+	}
+	state.SetBalance(txSender, new(big.Int).Sub(state.GetBalance(txSender), pledgeAmount))
+	topics := make([]common.Hash, 5)
+	//web3.sha3("declareStoragePledge2")
+	topics[0].UnmarshalText([]byte("0x33f1b782df697f77c462dee9d98bf443fcc8fab5fcb897d67ef0c69e8fd623a6"))
+	topics[1].SetBytes(peledgeAddr.Bytes())
+	topics[2].SetBytes(pledgeAllAmount.Bytes())
+	topics[3].SetBytes(pledgeAmount.Bytes())
+	topics[4].SetBytes(entrustRateBig.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	storageRecord := SPledge2Record{
+		PledgeAddr:      txSender,
+		Address:         peledgeAddr,
+		Price:           bigPrice,
+		SpaceDeposit:    pledgeAllAmount,
+		StorageCapacity: storageCapacity.BigInt(),
+		StorageSize:     storageSize.BigInt(),
+		RootHash:        common.HexToHash(rootHash),
+		PledgeNumber:    blocknumber,
+		Bandwidth:       bandwidth.BigInt(),
+		PledgeAmount:    pledgeAmount,
+		EntrustRate:     entrustRateBig,
+		Hash:tx.Hash(),
+	}
+	currStoragePledge2 = append(currStoragePledge2, storageRecord)
+	return currStoragePledge2
+}
+
+func (a *Alien) checkPledgeMaxStorageSpace2(currStoragePledge []SPledge2Record,targetDev common.Address, snap *Snapshot, number *big.Int,totalCapacity *big.Int) error {
+	if number.Uint64()>PledgeRevertLockEffectNumber{
+		targetRevenueAddress:=common.Address{}
+		findRevenue:=false
+		for device, revenue := range snap.RevenueStorage {
+			if targetDev==device {
+				targetRevenueAddress=revenue.RevenueAddress
+				findRevenue=true
+				break
+			}
+		}
+		if findRevenue{
+			alreadybind := make(map[common.Address]uint64)
+			devToRevenue:=make(map[common.Address]common.Address)
+			for device, revenue := range snap.RevenueStorage {
+				revenueAddress:=revenue.RevenueAddress
+				if targetRevenueAddress==revenueAddress {
+					alreadybind[device] = 1
+				}
+				devToRevenue[device]=revenueAddress
+			}
+			for _, item := range currStoragePledge {
+				if revenueAddress, ok := devToRevenue[item.Address]; ok {
+					if targetRevenueAddress==revenueAddress {
+						totalCapacity=new(big.Int).Add(totalCapacity,item.StorageCapacity)
+					}
+				}
+			}
+			return a.checkMaxStorageSpaceByAddr(alreadybind,snap,totalCapacity)
+		}
+	}
+	return nil
+}
+
+func (s *Snapshot) updateStorageData2(pledgeRecord []SPledge2Record, db ethdb.Database) {
+	if pledgeRecord == nil || len(pledgeRecord) == 0 {
+		return
+	}
+	for _, record := range pledgeRecord {
+		storageFile := make(map[common.Hash]*StorageFile)
+		storageFile[record.RootHash] = &StorageFile{
+			Capacity:                    new(big.Int).Set(record.StorageCapacity),
+			CreateTime:                  new(big.Int).Set(record.PledgeNumber),
+			LastVerificationTime:        new(big.Int).Set(record.PledgeNumber),
+			LastVerificationSuccessTime: new(big.Int).Set(record.PledgeNumber),
+			ValidationFailureTotalTime:  big.NewInt(0),
+		}
+		space := &SPledgeSpaces{
+			Address:                     record.Address,
+			StorageCapacity:             new(big.Int).Set(record.StorageCapacity),
+			RootHash:                    record.RootHash,
+			StorageFile:                 storageFile,
+			LastVerificationTime:        new(big.Int).Set(record.PledgeNumber),
+			LastVerificationSuccessTime: new(big.Int).Set(record.PledgeNumber),
+			ValidationFailureTotalTime:  big.NewInt(0),
+		}
+		pledgeStatus:=big.NewInt(SPledgeNormal)
+		if record.PledgeAmount.Cmp(record.SpaceDeposit)<0{
+			pledgeStatus=big.NewInt(SPledgeInactive)
+		}
+		storagepledge := &SPledge{
+			Address:                     record.PledgeAddr,
+			StorageSpaces:               space,
+			Number:                      new(big.Int).Set(record.PledgeNumber),
+			TotalCapacity:               new(big.Int).Set(record.StorageCapacity),
+			Price:                       new(big.Int).Set(record.Price),
+			StorageSize:                 new(big.Int).Set(record.StorageSize),
+			SpaceDeposit:                new(big.Int).Set(record.SpaceDeposit),
+			Lease:                       make(map[common.Hash]*Lease),
+			LastVerificationTime:        new(big.Int).Set(record.PledgeNumber),
+			LastVerificationSuccessTime: new(big.Int).Set(record.PledgeNumber),
+			ValidationFailureTotalTime:  big.NewInt(0),
+			PledgeStatus:                pledgeStatus,
+			Bandwidth:                   new(big.Int).Set(record.Bandwidth),
+		}
+		s.StorageData.StoragePledge[record.Address] = storagepledge
+		s.StorageData.accumulateSpaceStorageFileHash(record.Address, storageFile[record.RootHash])
+		s.StorageData.accumulatePledgeHash(record.Address)
+		storageEntrustDetail:=make(map[common.Hash]*SEntrustDetail)
+		storageEntrustDetail[record.Hash]=&SEntrustDetail{
+			Address:record.PledgeAddr,
+			Height:new(big.Int).Set(record.PledgeNumber),
+			Amount:new(big.Int).Set(record.PledgeAmount),
+		}
+		storageEntrust:=&SEntrust{
+			Manager:record.PledgeAddr,
+			Sphash:common.Hash{},
+			Spheight:common.Big0,
+			EntrustRate:new(big.Int).Set(record.EntrustRate),
+			PledgeAmount:new(big.Int).Set(record.PledgeAmount),
+			ManagerAmount:new(big.Int).Set(record.PledgeAmount),
+			Managerheight:new(big.Int).Set(record.PledgeNumber),
+			Detail:storageEntrustDetail,
+		}
+		s.StorageData.StorageEntrust[record.Address]=storageEntrust
+	}
+	s.StorageData.accumulateHeaderHash()
+}
+
+func (a *Alien) storageSPEntrust(currentSPEntrust []SPEntrustRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int, chain consensus.ChainHeaderReader) []SPEntrustRecord {
+	if len(txDataInfo) <= 4 {
+		log.Warn("storageSPEntrust", "parameter number", len(txDataInfo))
+		return currentSPEntrust
+	}
+	sPEntrust := SPEntrustRecord{
+		Target:  common.Address{},
+		Amount:  common.Big0,
+		Address: txSender,
+		Hash:    tx.Hash(),
+	}
+	postion := 3
+	if err := sPEntrust.Target.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("storageSPEntrust", "miner address", txDataInfo[postion])
+		return currentSPEntrust
+	}
+	if _, ok := snap.StorageData.StoragePledge[sPEntrust.Target]; !ok {
+		log.Warn("storageSPEntrust", "StoragePledge is not exist", sPEntrust.Target)
+		return currentSPEntrust
+	}
+	if _, ok := snap.StorageData.StorageEntrust[sPEntrust.Target]; !ok {
+		log.Warn("storageSPEntrust", "StorageEntrust is not exist", sPEntrust.Target)
+		return currentSPEntrust
+	}
+
+	if _, ok := snap.StorageData.StoragePledge[sPEntrust.Address]; ok {
+		log.Warn("storageSPEntrust", "txSender is Storage address", sPEntrust.Address)
+		return currentSPEntrust
+	}
+	postion++
+	if amount, err := decimal.NewFromString(txDataInfo[postion]); err != nil {
+		log.Warn("storageSPEntrust", "amount", txDataInfo[postion])
+		return currentSPEntrust
+	} else {
+		if amount.Cmp(decimal.Zero) < 0 {
+			log.Warn("storageSPEntrust", "amount small than 0", txDataInfo[postion])
+			return currentSPEntrust
+		}
+		sPEntrust.Amount=amount.BigInt()
+	}
+	if sPEntrust.Amount.Cmp(utgOneValue)<0{
+		log.Warn("storageSPEntrust", "amountBig small than 1 utg", txDataInfo[postion])
+		return currentSPEntrust
+	}
+	modValue:=new(big.Int).Mod(sPEntrust.Amount,utgOneValue)
+	if modValue.Cmp(common.Big0) !=0 {
+		log.Warn("storageSPEntrust", "amount must rounding", txDataInfo[postion])
+		return currentSPEntrust
+	}
+	storagePledge:=snap.StorageData.StoragePledge[sPEntrust.Target]
+	if storagePledge.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))!=0{
+		log.Warn("storageSPEntrust", "pledgeStatus is not inactive", sPEntrust.Target)
+		return currentSPEntrust
+	}
+	spaceDeposit:=new(big.Int).Set(storagePledge.SpaceDeposit)
+	storageEntrust:=snap.StorageData.StorageEntrust[sPEntrust.Target]
+	pledgeAmount:=new(big.Int).Set(storageEntrust.PledgeAmount)
+	pledgeAmount=new(big.Int).Add(pledgeAmount,sPEntrust.Amount)
+	for _,item:=range currentSPEntrust{
+		if item.Target==sPEntrust.Target{
+			pledgeAmount=new(big.Int).Add(pledgeAmount,item.Amount)
+		}
+	}
+	if pledgeAmount.Cmp(spaceDeposit)>0{
+		log.Warn("storageSPEntrust", "pledgeAmount bigger than spaceDeposit", pledgeAmount)
+		return currentSPEntrust
+	}
+	targetMiner := snap.findStorageTargetMiner(txSender)
+	nilAddr := common.Address{}
+	if targetMiner != nilAddr && targetMiner != sPEntrust.Target {
+		log.Warn("storageSPEntrust", "one address can only pledge one miner ", targetMiner)
+		return currentSPEntrust
+	}
+	if state.GetBalance(txSender).Cmp(sPEntrust.Amount) < 0 {
+		log.Warn("storageSPEntrust", "balance", state.GetBalance(txSender))
+		return currentSPEntrust
+	}
+	state.SubBalance(txSender, sPEntrust.Amount)
+	topics := make([]common.Hash, 2)
+	//web3.sha3("SN Entrusted Pledge")
+	topics[0].UnmarshalText([]byte("0x57e4a12eae9236c75aa3a85b2537ba16c8109de35fed13b6c4e392ffa860dd07"))
+	topics[1].SetBytes(sPEntrust.Target.Bytes())
+	data := common.Hash{}
+	data.SetBytes(sPEntrust.Amount.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, data.Bytes())
+	currentSPEntrust = append(currentSPEntrust, sPEntrust)
+	return currentSPEntrust
+}
+
+func (snap *Snapshot) findStorageTargetMiner(txSender common.Address) common.Address {
+	for miner, item := range snap.StorageData.StorageEntrust {
+		details := item.Detail
+		for _, detail := range details {
+			if detail.Address == txSender {
+				return miner
+			}
+		}
+	}
+	return common.Address{}
+}
+
+func (s *Snapshot) updateSPEntrust(entrustRecord []SPEntrustRecord, number *big.Int, db ethdb.Database) {
+	if entrustRecord== nil || len(entrustRecord)==0 {
+		return
+	}
+	for  _,entrust :=range entrustRecord {
+		if _,ok:=s.StorageData.StorageEntrust[entrust.Target];ok{
+			s.StorageData.StorageEntrust[entrust.Target].PledgeAmount=new(big.Int).Add(s.StorageData.StorageEntrust[entrust.Target].PledgeAmount,entrust.Amount)
+			storageEntrustDetail:=s.StorageData.StorageEntrust[entrust.Target].Detail
+			storageEntrustDetail[entrust.Hash]=&SEntrustDetail{
+				Address:entrust.Address,
+				Height:new(big.Int).Set(number),
+				Amount:new(big.Int).Set(entrust.Amount),
+			}
+			if entrust.Address==s.StorageData.StorageEntrust[entrust.Target].Manager{
+				s.StorageData.StorageEntrust[entrust.Target].ManagerAmount=new(big.Int).Add(s.StorageData.StorageEntrust[entrust.Target].ManagerAmount,entrust.Amount)
+				s.StorageData.StorageEntrust[entrust.Target].Managerheight=new(big.Int).Set(number)
+			}
+
+			storagePledge:=s.StorageData.StoragePledge[entrust.Target]
+			spaceDeposit:=new(big.Int).Set(storagePledge.SpaceDeposit)
+			storageEntrust:=s.StorageData.StorageEntrust[entrust.Target]
+			pledgeAmount:=new(big.Int).Set(storageEntrust.PledgeAmount)
+
+			if pledgeAmount.Cmp(spaceDeposit)>=0{
+				if s.StorageData.StoragePledge[entrust.Target].PledgeStatus.Cmp(big.NewInt(SPledgeInactive))==0{
+					s.StorageData.StoragePledge[entrust.Target].PledgeStatus=big.NewInt(SPledgeNormal)
+					s.StorageData.accumulatePledgeHash(entrust.Target)
+				}
+			}
+		}
+	}
+	s.StorageData.accumulateHeaderHash()
+}
+
+
+func (a *Alien) storageEntrustedPledgeTransfer(currentSETransfer []SETransferRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int, chain consensus.ChainHeaderReader) []SETransferRecord {
+	if len(txDataInfo) <= 5 {
+		log.Warn("storageEntrustedPledgeTransfer", "parameter error", len(txDataInfo))
+		return currentSETransfer
+	}
+	sETransfer := SETransferRecord{
+		Address:      txSender,
+		PledgeHash:   tx.Hash(),
+		Original:     common.Address{},
+		Target:       common.Address{},
+		PledgeAmount: big.NewInt(0),
+		LockAmount:   big.NewInt(0),
+	}
+	if isInCurrentSETransfer(currentSETransfer, sETransfer.Address) {
+		log.Warn("storageEntrustedPledgeTransfer", "Address is in currentSETransfer", sETransfer.Address)
+		return currentSETransfer
+	}
+	postion := 3
+	if err := sETransfer.Original.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("storageEntrustedPledgeTransfer", "Target error", txDataInfo[postion])
+		return currentSETransfer
+	}
+	if se, ok := snap.StorageData.StorageEntrust[sETransfer.Original]; ok {
+		if se.Manager == txSender {
+			log.Warn("storageEntrustedPledgeTransfer", "manager address no role", txDataInfo[postion])
+			return currentSETransfer
+		}
+		stp:=snap.StorageData.StoragePledge[sETransfer.Original]
+		if stp==nil{
+			log.Warn("storageEntrustedPledgeTransfer", "storagePledge is not exist", txDataInfo[postion])
+			return currentSETransfer
+		}
+		if stp.PledgeStatus.Cmp(big.NewInt(SPledgeNormal))!=0 &&stp.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))!=0 {
+			log.Warn("storageEntrustedPledgeTransfer", "stp Status  is exiting or exited ", txSender)
+			return currentSETransfer
+		}
+		transAmount := big.NewInt(0)
+		pledgeMinBLock := a.getEntrustPledgeMinBLock(stpEntrustMinDay)
+		for _, detail := range se.Detail {
+			if detail.Address == txSender {
+				pledgeBLock := new(big.Int).Sub(new(big.Int).SetUint64(snap.Number), detail.Height)
+				if pledgeBLock.Cmp(pledgeMinBLock) < 0 {
+					log.Warn("storageEntrustedPledgeTransfer", "Entrust hash illegality", txSender)
+					return currentSETransfer
+				}
+				transAmount = new(big.Int).Add(transAmount, detail.Amount)
+			}
+		}
+		if transAmount.Cmp(big.NewInt(0)) <= 0 {
+			log.Warn("storageEntrustedPledgeTransfer", "TxSender does not have a transferable deposit ", txSender)
+			return currentSETransfer
+		}
+		sETransfer.PledgeAmount = transAmount
+
+	} else {
+		log.Warn("storageEntrustedPledgeTransfer", "se not exist ", sETransfer.Original)
+		return currentSETransfer
+	}
+
+	postion++
+	sETransfer.TargetType = txDataInfo[postion]
+	postion++
+	if TargetTypePos == sETransfer.TargetType {
+		if err := sETransfer.Target.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+			log.Warn("storageEntrustedPledgeTransfer", "PoS target Address error", txDataInfo[postion])
+			return currentSETransfer
+		}
+		if _, ok := snap.PosPledge[sETransfer.Target]; !ok {
+			log.Warn("storageEntrustedPledgeTransfer", "PoS node not exit ", sETransfer.Target)
+			return currentSETransfer
+		}
+		if _, ok := snap.PosPledge[sETransfer.Address]; ok {
+			log.Warn("storageEntrustedPledgeTransfer", "txSender is miner address", sETransfer.Address)
+			return currentSETransfer
+		}
+		targetMiner := snap.findPosTargetMiner(txSender)
+		nilAddr := common.Address{}
+		if targetMiner != nilAddr && targetMiner != sETransfer.Target {
+			log.Warn("storageEntrustedPledgeTransfer", "one address can only pledge one pos miner ", targetMiner)
+			return currentSETransfer
+		}
+	} else if TargetTypeSp == sETransfer.TargetType {
+		if err := sETransfer.TargetHash.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+			log.Warn("storageEntrustedPledgeTransfer", "Sp target Hash error", txDataInfo[postion])
+			return currentSETransfer
+		}
+		if sp, ok := snap.SpData.PoolPledge[sETransfer.TargetHash]; !ok {
+			log.Warn("storageEntrustedPledgeTransfer", "Sp target not exit ", sETransfer.Target)
+			return currentSETransfer
+		} else{
+			if sp.Status != spStatusActive {
+				log.Warn("storageEntrustedPledgeTransfer", "SP Status  is need active ", txSender)
+				return currentSETransfer
+			}
+		}
+		targetPool := snap.findSPTargetMiner(txSender)
+		nilAddr := common.Hash{}
+		if targetPool != nilAddr && targetPool != sETransfer.TargetHash {
+			log.Warn("storageEntrustedPledgeTransfer", "one address can only pledge one pool ", targetPool)
+			return currentSETransfer
+		}
+	} else if TargetTypeSn == sETransfer.TargetType {
+		if _, ok := snap.StorageData.StoragePledge[sETransfer.Address]; ok {
+			log.Warn("storageEntrustedPledgeTransfer", "txSender is Storage address", sETransfer.Address)
+			return currentSETransfer
+		}
+		if err := sETransfer.Target.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+			log.Warn("storageEntrustedPledgeTransfer", "SN target Address error", txDataInfo[postion])
+			return currentSETransfer
+		}
+		currBlockTranAmount := big.NewInt(0)
+		for _, item := range currentSETransfer {
+			if item.Target == sETransfer.Target && "SN" == item.TargetType {
+				currBlockTranAmount = new(big.Int).Add(currBlockTranAmount, item.PledgeAmount)
+			}
+		}
+		if snEtPledge, ok := snap.StorageData.StorageEntrust[sETransfer.Target]; ok {
+			if snItem, ok1 := snap.StorageData.StoragePledge[sETransfer.Target]; ok1 {
+				if snItem.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))!=0{
+					log.Warn("storageEntrustedPledgeTransfer", "Sn is not inactive", sETransfer.Target)
+					return currentSETransfer
+				}
+				estimateAmountV1 := new(big.Int).Add(currBlockTranAmount, snEtPledge.PledgeAmount)
+				if estimateAmountV1.Cmp(snItem.SpaceDeposit) >= 0 {
+					log.Warn("storageEntrustedPledgeTransfer", "Sn entrusted pledge is full", txDataInfo[postion])
+					return currentSETransfer
+				}
+				estimateAmountV2 := new(big.Int).Add(estimateAmountV1, sETransfer.PledgeAmount)
+				lockAmount := big.NewInt(0)
+				if estimateAmountV2.Cmp(snItem.SpaceDeposit) > 0 {
+					lockAmount = new(big.Int).Sub(estimateAmountV2, snItem.SpaceDeposit)
+					sETransfer.PledgeAmount = new(big.Int).Sub(sETransfer.PledgeAmount, lockAmount)
+				}
+				//SN deposit must be an integer   get non integer parts
+				depositMode := new(big.Int).Mod(sETransfer.PledgeAmount, utgOneValue)
+				// Add non integer parts to the lock compartment
+				if depositMode.Cmp(big.NewInt(0)) > 0 {
+					lockAmount = new(big.Int).Add(lockAmount, depositMode)
+					sETransfer.PledgeAmount = new(big.Int).Sub(sETransfer.PledgeAmount, depositMode)
+				}
+				if lockAmount.Cmp(big.NewInt(0)) > 0 {
+					sETransfer.LockAmount = lockAmount
+				}
+			}
+		} else {
+			log.Warn("storageEntrustedPledgeTransfer", "SN node not exit", sETransfer.Target)
+			return currentSETransfer
+		}
+	} else {
+		log.Warn("storageEntrustedPledgeTransfer", "TargetType is illegal", sETransfer.Target)
+		return currentSETransfer
+	}
+
+	currentSETransfer = append(currentSETransfer, sETransfer)
+	topics := make([]common.Hash, 3)
+	//web3.sha3("SN transfer")
+	topics[0].UnmarshalText([]byte("0xf68b680cedfcbf256334ac11f459a46ca138442b9d8a174a97bed31884eece4e"))
+	topics[1].SetBytes(sETransfer.LockAmount.Bytes())
+	topics[2].SetBytes(sETransfer.PledgeAmount.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	return currentSETransfer
+}
+
+func (s *Snapshot) updateSETransfer(entrustRecord []SETransferRecord, number *big.Int, db ethdb.Database) {
+	if len(entrustRecord) == 0 {
+		return
+	}
+	spCount := 0
+	snCount := 0
+
+	for _, record := range entrustRecord {
+		if TargetTypePos == record.TargetType {
+			if posItem, ok := s.PosPledge[record.Target]; ok {
+				posItem.Detail[record.PledgeHash] = &PledgeDetail{
+					Address: record.Address,
+					Height:  number.Uint64(),
+					Amount:  record.PledgeAmount,
+				}
+				posItem.TotalAmount = new(big.Int).Add(posItem.TotalAmount, record.PledgeAmount)
+			}
+		} else if TargetTypeSp == record.TargetType {
+			if targetSp, ok := s.SpData.PoolPledge[record.TargetHash]; ok {
+				targetSp.TotalAmount = new(big.Int).Add(targetSp.TotalAmount, record.PledgeAmount)
+				preCapacity := getCapacity(targetSp.TotalAmount)
+				if preCapacity.Cmp(targetSp.TotalCapacity) > 0 {
+					targetSp.TotalCapacity = preCapacity
+				}
+				if targetSp.Manager==record.Address{
+					targetSp.ManagerAmount=new(big.Int).Add(targetSp.ManagerAmount,record.PledgeAmount)
+				}
+				targetSp.EtDetail[record.PledgeHash] = &EntrustDetail{
+					Address: record.Address,
+					Height:  new(big.Int).Set(number),
+					Amount:  record.PledgeAmount,
+					Hash:    getHash(changeOxToUx(record.Address.String()) + record.PledgeAmount.String() + number.String()),
+				}
+				s.SpData.accumulateSpPledgelHash(record.TargetHash, false)
+				spCount++
+			}
+		} else if TargetTypeSn == record.TargetType {
+			if targetSn, ok := s.StorageData.StorageEntrust[record.Target]; ok {
+				targetSn.PledgeAmount = new(big.Int).Add(targetSn.PledgeAmount, record.PledgeAmount)
+				targetSn.Detail[record.PledgeHash] = &SEntrustDetail{
+					Address: record.Address,
+					Height:  new(big.Int).Set(number),
+					Amount:  record.PledgeAmount,
+				}
+				if record.Address==targetSn.Manager{
+					targetSn.ManagerAmount=new(big.Int).Add(targetSn.ManagerAmount,record.PledgeAmount)
+					targetSn.Managerheight=new(big.Int).Set(number)
+				}
+				if stp, ok1 := s.StorageData.StoragePledge[record.Target]; ok1 {
+					if targetSn.PledgeAmount.Cmp(stp.SpaceDeposit)>=0&&stp.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))==0{
+						s.StorageData.StoragePledge[record.Target].PledgeStatus=big.NewInt(SPledgeNormal)
+						s.StorageData.accumulatePledgeHash(record.Target)
+					}
+				}
+			}
+			snCount++
+		}
+		if se, ok := s.StorageData.StorageEntrust[record.Original]; ok {
+			delHash := make([]common.Hash, 0)
+			for etHash, detail := range se.Detail {
+				if record.Address == detail.Address {
+					delHash = append(delHash, etHash)
+				}
+			}
+			for _, removeHash := range delHash {
+				delete(se.Detail, removeHash)
+			}
+			se.PledgeAmount = new(big.Int).Sub(se.PledgeAmount, new(big.Int).Add(record.LockAmount, record.PledgeAmount))
+			if record.LockAmount.Cmp(common.Big0)>0{
+				s.FlowRevenue.STPEntrustExitLock.updateSTPEntrustTransferLockData(s, record, number)
+			}
+			if stp, ok1 := s.StorageData.StoragePledge[record.Original]; ok1 {
+				if se.PledgeAmount.Cmp(stp.SpaceDeposit)<0{
+					if s.StorageData.StoragePledge[record.Original].PledgeStatus.Cmp(big.NewInt(SPledgeNormal))==0 {
+						s.StorageData.StoragePledge[record.Original].PledgeStatus=big.NewInt(SPledgeInactive)
+						s.StorageData.accumulatePledgeHash(record.Original)
+					}
+				}
+			}
+		}
+		if spCount > 0 {
+			s.SpData.accumulateSpDataHash()
+		}
+		if snCount > 0 {
+
+		}
+
+	}
+}
+
+func (a *Alien) storageEntrustedPledgeExit(currentSEExit []SEExitRecord, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int, chain consensus.ChainHeaderReader) []SEExitRecord {
+	if len(txDataInfo) <= 4 {
+		log.Warn("storageEntrustedPledgeExit", "parameter number", len(txDataInfo))
+		return currentSEExit
+	}
+	sEExit := SEExitRecord{
+		Target:  common.Address{},
+		Hash:    common.Hash{},
+		Address: common.Address{},
+		Amount:  common.Big0,
+	}
+	postion := 3
+	if err := sEExit.Target.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("storageEntrustedPledgeExit", "miner address", txDataInfo[postion])
+		return currentSEExit
+	}
+	postion++
+	sEExit.Hash = common.HexToHash(txDataInfo[postion])
+
+	if se, ok := snap.StorageData.StorageEntrust[sEExit.Target]; !ok {
+		log.Warn("storageEntrustedPledgeExit", "StorageEntrust is not exist", sEExit.Target)
+		return currentSEExit
+	}else{
+		if se.Manager==txSender{
+			log.Warn("storageEntrustedPledgeExit", "txSender is Manager", sEExit.Target)
+			return currentSEExit
+		}
+	}
+
+	if _, ok := snap.StorageData.StorageEntrust[sEExit.Target].Detail[sEExit.Hash]; !ok {
+		log.Warn("storageEntrustedPledgeExit", "Hash is not exist", sEExit.Hash)
+		return currentSEExit
+	} else {
+		pledgeDetail := snap.StorageData.StorageEntrust[sEExit.Target].Detail[sEExit.Hash]
+		if pledgeDetail.Address != txSender {
+			log.Warn("storageEntrustedPledgeExit", "txSender is not right", txSender)
+			return currentSEExit
+		}
+		pledgeMinBLock := a.getEntrustPledgeMinBLock(stpEntrustMinDay)
+		pledgeBLock := new(big.Int).Sub(number, pledgeDetail.Height)
+		if pledgeBLock.Cmp(pledgeMinBLock) < 0 {
+			log.Warn("storageEntrustedPledgeExit", "Entrust hash not pass time", pledgeDetail.Height)
+			return currentSEExit
+		}
+		sEExit.Address = pledgeDetail.Address
+		sEExit.Amount = pledgeDetail.Amount
+	}
+
+	if isInCurrentSEExit(currentSEExit, sEExit.Hash) {
+		log.Warn("storageEntrustedPledgeExit", "Hash is in currentSEExit", sEExit.Hash)
+		return currentSEExit
+	}
+
+
+	topics := make([]common.Hash, 3)
+	//web3.sha3("storageEntrustedPledgeExit")
+	topics[0].UnmarshalText([]byte("0xc521ac477094ac2b7dcbd15657cf772d3ede04ec238fd38682f43decabb922bf"))
+	topics[1].SetBytes(sEExit.Target.Bytes())
+	topics[2].SetBytes(sEExit.Amount.Bytes())
+	data := common.Hash{}
+	data.SetBytes(sEExit.Hash.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, data.Bytes())
+	currentSEExit = append(currentSEExit, sEExit)
+	return currentSEExit
+}
+
+func isInCurrentSEExit(currentSEExit []SEExitRecord, hash common.Hash) bool {
+	has := false
+	for _, currentItem := range currentSEExit {
+		if currentItem.Hash == hash {
+			has = true
+			break
+		}
+	}
+	return has
+}
+
+func (s *Snapshot) updateSEExit(sEExitRecord []SEExitRecord, number *big.Int, db ethdb.Database) {
+	if len(sEExitRecord) == 0 {
+		return
+	}
+	for _, record := range sEExitRecord {
+		if se, ok := s.StorageData.StorageEntrust[record.Target]; ok {
+			delete(se.Detail, record.Hash)
+			se.PledgeAmount = new(big.Int).Sub(se.PledgeAmount,record.Amount)
+			if record.Amount.Cmp(common.Big0)>0{
+				s.FlowRevenue.STPEntrustExitLock.updateSTPEExitLockData(s, record, number)
+			}
+			if stp, ok1 := s.StorageData.StoragePledge[record.Target]; ok1 {
+				if se.PledgeAmount.Cmp(stp.SpaceDeposit)<0{
+					if s.StorageData.StoragePledge[record.Target].PledgeStatus.Cmp(big.NewInt(SPledgeNormal))==0{
+						s.StorageData.StoragePledge[record.Target].PledgeStatus=big.NewInt(SPledgeInactive)
+						s.StorageData.accumulatePledgeHash(record.Target)
+					}
+				}
+			}
+		}
+	}
+	s.StorageData.accumulateHeaderHash()
+}
+
+func (s *StorageData) dealSPledgeRevert4(pledge *SPledge, revertLockReward []SpaceRewardRecord, revertExchangeSRT []ExchangeSRTRecord, rate uint32, number uint64, blockPerday uint64,bAmount *big.Int,revenueStorage map[common.Address]*RevenueParameter,pledgeAddress common.Address,snap *Snapshot) ([]SpaceRewardRecord, []ExchangeSRTRecord,*big.Int) {
+	bigNumber := new(big.Int).SetUint64(number)
+	bigblockPerDay := new(big.Int).SetUint64(blockPerday)
+	zeroTime := new(big.Int).Mul(new(big.Int).Div(bigNumber, bigblockPerDay), bigblockPerDay) //0:00 every day
+	beforeZeroTime := new(big.Int).Sub(zeroTime, bigblockPerDay)
+	beforeZeroTime=new(big.Int).Add(beforeZeroTime,common.Big1)
+	maxFailNum := maxStgVerContinueDayFail * blockPerday
+	bigMaxFailNum := new(big.Int).SetUint64(maxFailNum)
+	revertDeposit:=common.Big0
+	var depositAddress common.Address
+	if se,ok:=s.StorageEntrust[pledgeAddress];ok{
+		depositAddress=se.Manager
+		revertDeposit=new(big.Int).Set(se.ManagerAmount)
+		if beforeZeroTime.Cmp(bigMaxFailNum) >= 0 {
+			beforeSevenDayNumber := new(big.Int).Sub(beforeZeroTime, bigMaxFailNum)
+			lastVerSuccTime := pledge.LastVerificationSuccessTime
+			if lastVerSuccTime.Cmp(beforeSevenDayNumber) <= 0 {
+				bAmount=new(big.Int).Add(bAmount,new(big.Int).Set(se.ManagerAmount))
+				revertDeposit=big.NewInt(0)
+				revenueAddress:=common.Address{}
+				if revenue,ok1:=revenueStorage[pledgeAddress];ok1{
+					revenueAddress=revenue.RevenueAddress
+				}
+				for _,item:=range se.Detail{
+					if (item.Address==revenueAddress||item.Address==pledgeAddress)&&item.Address!=se.Manager{
+						bAmount=new(big.Int).Add(bAmount,item.Amount)
+					}
+				}
+
+				burnFlowReward :=snap.FlowRevenue.FlowLock.calBurnSpIllegalReward(pledgeAddress,pledgeAddress,uint32(sscEnumFlwReward))
+				burnBandwidthReward :=snap.FlowRevenue.BandwidthLock.calBurnSpIllegalReward(pledgeAddress,pledgeAddress,uint32(sscEnumBandwidthReward))
+				burnSTPEnRevenueReward :=snap.FlowRevenue.STPEntrustLock.calBurnSpIllegalReward(revenueAddress,pledgeAddress,uint32(sscEnumSTEntrustLockReward))
+				burnSTPEnManagerReward:=common.Big0
+				if revenueAddress!=se.Manager{
+					burnSTPEnManagerReward=snap.FlowRevenue.STPEntrustLock.calBurnSpIllegalReward(se.Manager,pledgeAddress,uint32(sscEnumSTEntrustLockReward))
+				}
+				if burnFlowReward.Cmp(common.Big0) >0 {
+					bAmount=new(big.Int).Add(bAmount, burnFlowReward)
+				}
+				if burnBandwidthReward.Cmp(common.Big0) >0 {
+					bAmount=new(big.Int).Add(bAmount, burnBandwidthReward)
+				}
+				if burnSTPEnRevenueReward.Cmp(common.Big0) >0 {
+					bAmount=new(big.Int).Add(bAmount, burnSTPEnRevenueReward)
+				}
+				if burnSTPEnManagerReward.Cmp(common.Big0) >0 {
+					bAmount=new(big.Int).Add(bAmount, burnSTPEnManagerReward)
+				}
+			}
+		}
+		if revertDeposit.Cmp(common.Big0) > 0 {
+			revertLockReward = append(revertLockReward, SpaceRewardRecord{
+				Target:  depositAddress,
+				Amount:  revertDeposit,
+				Revenue: depositAddress,
+			})
+		}
+	}
+
+	return revertLockReward, revertExchangeSRT, bAmount
+}
+
+func (s *StorageData) storageVerify3(number uint64, blockPerday uint64, revenueStorage map[common.Address]*RevenueParameter) ([]common.Address, []common.Hash, map[common.Address]*StorageRatio, map[common.Address]*big.Int) {
+	sussSPAddrs := make([]common.Address, 0)
+	sussRentHashs := make([]common.Hash, 0)
+	storageRatios := make(map[common.Address]*StorageRatio, 0)
+	capSuccAddrs := make(map[common.Address]*big.Int, 0)
+
+	bigNumber := new(big.Int).SetUint64(number)
+	bigblockPerDay := new(big.Int).SetUint64(blockPerday)
+	zeroTime := new(big.Int).Mul(new(big.Int).Div(bigNumber, bigblockPerDay), bigblockPerDay) //0:00 every day
+	beforeZeroTime := new(big.Int).Sub(zeroTime, bigblockPerDay)
+	beforeZeroTime=new(big.Int).Add(beforeZeroTime,common.Big1)
+	bigOne := big.NewInt(1)
+	for pledgeAddr, sPledge := range s.StoragePledge {
+		isSfVerSucc := true
+		capSucc := big.NewInt(0)
+		storagespaces := s.StoragePledge[pledgeAddr].StorageSpaces
+		sfiles := storagespaces.StorageFile
+		for _, sfile := range sfiles {
+			lastVerSuccTime := sfile.LastVerificationSuccessTime
+			if lastVerSuccTime.Cmp(beforeZeroTime) < 0 {
+				isSfVerSucc = false
+				sfile.ValidationFailureTotalTime = new(big.Int).Add(sfile.ValidationFailureTotalTime, bigOne)
+				s.accumulateSpaceStorageFileHash(pledgeAddr, sfile)
+			} else {
+				capSucc = new(big.Int).Add(capSucc, sfile.Capacity)
+			}
+		}
+		if isSfVerSucc {
+			storagespaces.LastVerificationSuccessTime = beforeZeroTime
+		} else {
+			storagespaces.ValidationFailureTotalTime = new(big.Int).Add(storagespaces.ValidationFailureTotalTime, bigOne)
+		}
+		storagespaces.LastVerificationTime = beforeZeroTime
+		s.accumulateSpaceHash(pledgeAddr)
+		leases := make(map[common.Hash]*Lease)
+		for lhash, l := range sPledge.Lease {
+			if l.Status == LeaseNormal || l.Status == LeaseBreach {
+				leases[lhash] = l
+			}
+		}
+		for lhash, lease := range leases {
+			isVerSucc := true
+			storageFile := lease.StorageFile
+			for _, file := range storageFile {
+				lastVerSuccTime := file.LastVerificationSuccessTime
+				if lastVerSuccTime.Cmp(beforeZeroTime) < 0 {
+					isVerSucc = false
+					file.ValidationFailureTotalTime = new(big.Int).Add(file.ValidationFailureTotalTime, bigOne)
+					s.accumulateLeaseStorageFileHash(pledgeAddr, lhash, file)
+				} else {
+					capSucc = new(big.Int).Add(capSucc, file.Capacity)
+				}
+			}
+			leaseLists := lease.LeaseList
+			expireNumber := big.NewInt(0)
+			for ldhash, leaseDetail := range leaseLists {
+				deposit := leaseDetail.Deposit
+				if deposit.Cmp(big.NewInt(0)) > 0 {
+					startTime := leaseDetail.StartTime
+					duration := leaseDetail.Duration
+					leaseDetailEndNumber := new(big.Int).Add(startTime, new(big.Int).Mul(duration, new(big.Int).SetUint64(blockPerday)))
+					if ldhash!=lhash{
+						leaseDetailEndNumber=new(big.Int).Sub(leaseDetailEndNumber,common.Big1)
+					}
+					if startTime.Cmp(beforeZeroTime) <= 0 && leaseDetailEndNumber.Cmp(beforeZeroTime) >= 0 {
+						if !isVerSucc {
+							leaseDetail.ValidationFailureTotalTime = new(big.Int).Add(leaseDetail.ValidationFailureTotalTime, bigOne)
+							s.accumulateLeaseDetailHash(pledgeAddr, lhash, leaseDetail)
+						}
+					}
+					if expireNumber.Cmp(leaseDetailEndNumber) < 0 {
+						expireNumber = leaseDetailEndNumber
+					}
+				}
+			}
+			if expireNumber.Cmp(bigNumber) <= 0 {
+				lease.Status = LeaseExpiration
+			}
+			//cal ROOT HASH
+
+			if isVerSucc {
+				lease.LastVerificationSuccessTime = beforeZeroTime
+				sussRentHashs = append(sussRentHashs, lhash)
+				if lease.Status == LeaseBreach {
+					duration10 := new(big.Int).Mul(lease.Duration, big.NewInt(rentFailToRescind))
+					duration10 = new(big.Int).Div(duration10, big.NewInt(100))
+					if lease.ValidationFailureTotalTime.Cmp(duration10) < 0 {
+						lease.Status = LeaseNormal
+					}
+				}
+			} else {
+				lease.ValidationFailureTotalTime = new(big.Int).Add(lease.ValidationFailureTotalTime, bigOne)
+				if lease.Status == LeaseNormal {
+					duration10 := new(big.Int).Mul(lease.Duration, big.NewInt(rentFailToRescind))
+					duration10 = new(big.Int).Div(duration10, big.NewInt(100))
+					if isGTIncentiveEffect(number){
+						if lease.ValidationFailureTotalTime.Cmp(duration10) >= 0 {
+							lease.Status = LeaseBreach
+						}
+					}else{
+						if lease.ValidationFailureTotalTime.Cmp(duration10) > 0 {
+							lease.Status = LeaseBreach
+						}
+					}
+				}
+			}
+			lease.LastVerificationTime = beforeZeroTime
+			s.accumulateLeaseHash(pledgeAddr, lease)
+		}
+
+		isPledgeVerSucc := false
+		cap80 := new(big.Int).Mul(capSucNeedPer, sPledge.TotalCapacity)
+		cap80 = new(big.Int).Div(cap80, big.NewInt(100))
+		if capSucc.Cmp(cap80)>0{
+			isPledgeVerSucc = true
+		}
+		if isPledgeVerSucc {
+			sussSPAddrs = append(sussSPAddrs, pledgeAddr)
+			if _, ok3 := capSuccAddrs[pledgeAddr]; !ok3 {
+				capSuccAddrs[pledgeAddr] = capSucc
+			}
+			sPledge.LastVerificationSuccessTime = beforeZeroTime
+		} else {
+			sPledge.ValidationFailureTotalTime = new(big.Int).Add(sPledge.ValidationFailureTotalTime, bigOne)
+			maxFailNum := maxStgVerContinueDayFail * blockPerday
+			bigMaxFailNum := new(big.Int).SetUint64(maxFailNum)
+			if beforeZeroTime.Cmp(bigMaxFailNum) >= 0 {
+				beforeSevenDayNumber := new(big.Int).Sub(beforeZeroTime, bigMaxFailNum)
+				lastVerSuccTime := sPledge.LastVerificationSuccessTime
+				if lastVerSuccTime.Cmp(beforeSevenDayNumber) <= 0 {
+					sPledge.PledgeStatus = big.NewInt(SPledgeRemoving)
+				}
+			}
+		}
+		sPledge.LastVerificationTime = beforeZeroTime
+		s.accumulateSpaceHash(pledgeAddr)
+	}
+	//cal ROOT HASH
+	s.accumulateHeaderHash()
+	return sussSPAddrs, sussRentHashs, storageRatios, capSuccAddrs
+}
+
+func (s *StorageData) accumulateLeaseRewards3(ratios map[common.Address]*StorageRatio, addrs []common.Hash, basePrice *big.Int, revenueStorage map[common.Address]*RevenueParameter, blocknumber uint64, db ethdb.Database, snapTotalLeaseSpace *big.Int,spData *SpData,snap *Snapshot) ([]SpaceRewardRecord, *big.Int, *big.Int,*big.Int) {
+	var LockReward []SpaceRewardRecord
+	//basePrice := // SRT /TB.day
+	storageHarvest := common.Big0
+	feeBurnAmount:=common.Big0
+	if nil == addrs || len(addrs) == 0 {
+		return LockReward, storageHarvest,nil,nil
+	}
+	validSuccLesae := make(map[common.Hash]uint64)
+	for _, leaseHash := range addrs {
+		validSuccLesae[leaseHash] = 1
+	}
+	decimalBasePrice:=decimal.NewFromBigInt(basePrice, 0)
+	totalLeaseSpace:=s.getTotalLeaseSpace2(validSuccLesae,blocknumber,decimalBasePrice,spData)
+	err:=s.saveDecimalValueTodb(totalLeaseSpace, db, blocknumber,totalLeaseSpaceKey)
+	if err != nil {
+		log.Error("saveTotalLeaseSpace", "err", err, "number", blocknumber)
+	}
+	AddTotalLeaseSpace:=totalLeaseSpace.Add(decimal.NewFromBigInt(snapTotalLeaseSpace, 0))
+	for pledgeAddr, storage := range s.StoragePledge {
+		if storage.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))==0{
+			continue
+		}
+		totalReward := big.NewInt(0)
+			for leaseHash, lease := range storage.Lease {
+				if _, ok2 := validSuccLesae[leaseHash]; ok2 {
+					leaseCapacity := decimal.NewFromBigInt(lease.Capacity, 0).Div(decimal.NewFromInt(1073741824)) //to GB
+					var storageIndex decimal.Decimal
+					if se, ok3 := s.StorageEntrust[pledgeAddr]; ok3 {
+						if sp, ok4 := spData.PoolPledge[se.Sphash];ok4&&sp.Status==spStatusActive{
+							storageIndex=decimal.NewFromBigInt(sp.SnRatio,0).Div(SnDefaultRatioDigit)
+						}else{
+							storageIndex=s.calStorageRatio(storage.TotalCapacity,blocknumber)
+						}
+					}else{
+						storageIndex=s.calStorageRatio(storage.TotalCapacity,blocknumber)
+					}
+					bandwidthIndex := getBandwaith(storage.Bandwidth,blocknumber)
+					reward := s.calStorageLeaseNewReward2(leaseCapacity, bandwidthIndex, storageIndex, decimal.NewFromBigInt(lease.UnitPrice, 0),decimalBasePrice,AddTotalLeaseSpace)
+					totalReward = new(big.Int).Add(totalReward, reward.BigInt())
+				}
+			}
+			if totalReward.Cmp(big.NewInt(0)) > 0 {
+				revenueAddress:= pledgeAddr
+				if revenue, ok := revenueStorage[pledgeAddr]; ok {
+					revenueAddress=revenue.RevenueAddress
+				}else{
+					if se, ok3 := s.StorageEntrust[pledgeAddr]; ok3 {
+						revenueAddress=se.Manager
+					}
+				}
+				LockReward = append(LockReward, SpaceRewardRecord{
+					Target:  pledgeAddr,
+					Amount:  totalReward,
+					Revenue: revenueAddress,
+				})
+				storageHarvest = new(big.Int).Add(storageHarvest, totalReward)
+				feeBurnAmount = s.getFeeBurnAmount(pledgeAddr, snap, totalReward, feeBurnAmount)
+			}
+	}
+	err=s.saveTotalValueTodb(storageHarvest, db, blocknumber,leaseHarvestKey)
+	if err != nil {
+		log.Error("saveleaseHarvest", "err", err, "number", blocknumber)
+	}
+	return LockReward, storageHarvest,totalLeaseSpace.BigInt(),feeBurnAmount
+}
+
+func (s *StorageData) calcStoragePledgeReward4(ratios map[common.Address]*StorageRatio, revenueStorage map[common.Address]*RevenueParameter, number uint64, period uint64, sussSPAddrs []common.Address, capSuccAddrs map[common.Address]*big.Int, db ethdb.Database,snap *Snapshot) ([]SpaceRewardRecord, *big.Int, *big.Int) {
+	reward := make([]SpaceRewardRecord, 0)
+	storageHarvest := big.NewInt(0)
+	leftAmount:=common.Big0
+	validSuccSPAddrs := make(map[common.Address]uint64)
+	for _, sPAddrs := range sussSPAddrs {
+		validSuccSPAddrs[sPAddrs] = 1
+	}
+	for pledgeAddr, sPledge := range s.StoragePledge {
+		if _, ok := validSuccSPAddrs[pledgeAddr]; !ok {
+			continue
+		}
+		if sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeInactive))==0{
+			continue
+		}
+		if capSucc, ok3 := capSuccAddrs[pledgeAddr]; ok3 {
+			if capSucc.Cmp(common.Big0)>0{
+				if s.isSPledgeIncentivePeriod(sPledge.Number,number, period){
+					if s.isSPledgeFrontIncentivePeriod(sPledge.Number,number, period)||s.isSPledgeRentalThreshold(sPledge){
+						apr := getApr(sPledge.Number, period)
+						pledgeReward := decimal.NewFromBigInt(sPledge.SpaceDeposit, 0).Mul(apr).Div(decimal.NewFromInt(365))
+						pledgeRewardBigInt:=pledgeReward.BigInt()
+						if pledgeRewardBigInt.Cmp(common.Big0)>0{
+							revenueAddress:=pledgeAddr
+							if revenue, ok := revenueStorage[pledgeAddr]; ok {
+								revenueAddress=revenue.RevenueAddress
+							}else{
+								if se, ok4 := s.StorageEntrust[pledgeAddr]; ok4 {
+									revenueAddress=se.Manager
+								}
+							}
+							reward = append(reward, SpaceRewardRecord{
+								Target:  pledgeAddr,
+								Amount:  pledgeRewardBigInt,
+								Revenue: revenueAddress,
+							})
+							storageHarvest = new(big.Int).Add(storageHarvest, pledgeRewardBigInt)
+							leftAmount = s.getFeeBurnAmount(pledgeAddr, snap, pledgeRewardBigInt, leftAmount)
+						}
+					}
+				}
+			}
+		}
+
+	}
+	return reward, storageHarvest,leftAmount
+}
+
+func (s *StorageData) calDealLeaseStatus2(number uint64, snap *Snapshot, db ethdb.Database, header *types.Header, revenueStorage map[common.Address]*RevenueParameter) {
+	delPledge := make([]common.Address, 0)
+	removePledge:=make([]common.Address, 0)
+	normalExitPledge:=make([]common.Address, 0)
+	for pledgeAddress, sPledge := range s.StoragePledge {
+		if sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeRemoving)) == 0{
+			removePledge = append(removePledge, pledgeAddress)
+		}
+		if sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeExit)) == 0{
+			normalExitPledge = append(normalExitPledge, pledgeAddress)
+		}
+		if sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeRetrun)) == 0 {
+			continue
+		}
+		if sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeRemoving)) == 0 || sPledge.PledgeStatus.Cmp(big.NewInt(SPledgeExit)) == 0 {
+			sPledge.PledgeStatus = big.NewInt(SPledgeRetrun)
+			delPledge = append(delPledge, pledgeAddress)
+			s.accumulateSpaceHash(pledgeAddress)
+			continue
+		}
+
+		leases := sPledge.Lease
+		for _, lease := range leases {
+			if lease.Status == LeaseReturn {
+				continue
+			}
+			if lease.Status == LeaseUserRescind || lease.Status == LeaseExpiration {
+				lease.Status = LeaseReturn
+				s.accumulateLeaseHash(pledgeAddress, lease)
+			}
+		}
+	}
+
+		if len(removePledge)>0{
+			burnSTPMap :=make(map[common.Address]map[common.Address]uint64,0)
+			for _,pledgeAddress:=range removePledge{
+				revenueAddress:=common.Address{}
+				if revenue,ok1:=revenueStorage[pledgeAddress];ok1{
+					revenueAddress=revenue.RevenueAddress
+					if _,ok:=burnSTPMap[revenueAddress];!ok {
+						burnSTPMap[revenueAddress]=make(map[common.Address]uint64,0)
+					}
+					burnSTPMap[revenueAddress][pledgeAddress]=uint64(1)
+				}
+				if se,ok2:=s.StorageEntrust[pledgeAddress];ok2{
+					if _,ok:=burnSTPMap[se.Manager];!ok {
+						burnSTPMap[se.Manager]=make(map[common.Address]uint64,0)
+					}
+					burnSTPMap[se.Manager][pledgeAddress]=uint64(1)
+					for _,item:=range se.Detail{
+						if item.Address!=revenueAddress&&item.Address!=se.Manager&&item.Address!=pledgeAddress{
+							snap.FlowRevenue.STPEntrustExitLock.updateSTPExitLockData(snap, item, new(big.Int).SetUint64(number),pledgeAddress)
+						}
+					}
+				}
+			}
+			err := snap.FlowRevenue.STPEntrustLock.setSpIllegalLockPunish(burnSTPMap, db, header.Hash(), header.Number.Uint64(), uint32(sscEnumSTEntrustLockReward))
+			if err != nil {
+				log.Warn("setSpIllegalLockPunish STPEntrustLock Error", "err", err)
+			}
+			snap.setStorageRemovePunish2(removePledge, number, db, header)
+		}
+	if len(normalExitPledge) > 0 {
+		for _, pledgeAddress := range normalExitPledge {
+			if se, ok2 := s.StorageEntrust[pledgeAddress]; ok2 {
+				detail := se.Detail
+				for _, item := range detail {
+					if item.Address != se.Manager {
+						snap.FlowRevenue.STPEntrustExitLock.updateSTPExitLockData(snap, item, new(big.Int).SetUint64(number), pledgeAddress)
+					}
+				}
+			}
+		}
+	}
+	for _, delAddr := range delPledge {
+		s.deleteSpCapAndRs(delAddr, snap)
+		delete(s.StoragePledge, delAddr)
+	}
+	snap.SpData.accumulateSpDataHash()
+	s.accumulateHeaderHash()
+	return
+}
+
+func (a *Alien) storageExitPool(currentExitPool []common.Address, txDataInfo []string, txSender common.Address, tx *types.Transaction, receipts []*types.Receipt, state *state.StateDB, snap *Snapshot, number *big.Int) []common.Address {
+	if len(txDataInfo) <=3 {
+		log.Warn("storageExitPool", "parameter number", len(txDataInfo))
+		return currentExitPool
+	}
+	postion := 3
+	var target common.Address
+	if err := target.UnmarshalText1([]byte(txDataInfo[postion])); err != nil {
+		log.Warn("storageExitPool", "Pledge", txDataInfo[postion])
+		return currentExitPool
+	}
+	nilHash := common.Hash{}
+	if _, ok := snap.StorageData.StorageEntrust[target]; ok {
+		if snap.StorageData.StorageEntrust[target].Manager != txSender {
+			log.Warn("storageExitPool", "txSender is not manager", txSender)
+			return currentExitPool
+		}
+		if snap.StorageData.StorageEntrust[target].Sphash==nilHash {
+			log.Warn("storageExitPool", "Sphash is nilHash", target)
+			return currentExitPool
+		}
+	}else{
+		log.Warn("storageExitPool", "manager is empty", target)
+		return currentExitPool
+	}
+
+	if _, ok := snap.StorageData.StorageEntrust[target]; ok {
+		if snap.StorageData.StorageEntrust[target].Sphash!=nilHash {
+			spheight:=snap.StorageData.StorageEntrust[target].Spheight
+			if number.Uint64()-spheight.Uint64()<= sPPoollockDay*snap.getBlockPreDay(){
+				log.Warn("storageExitPool", "sPPoollockDay not pass", target)
+				return currentExitPool
+			}
+		}
+	}else{
+		log.Warn("storageExitPool", "StoragePledge is empty", target)
+		return currentExitPool
+	}
+	if isInCurrentExitPool(currentExitPool, target) {
+		log.Warn("storageExitPool", "target is in currentExitPool", target)
+		return currentExitPool
+	}
+	topics := make([]common.Hash, 2)
+	//web3.sha3("Exit Storage Pool")
+	topics[0].UnmarshalText([]byte("0xcf0eb0e1ba306c396193c82bbba8de529adf625b69730027078c6aedc8264ef0"))
+	topics[1].SetBytes(target.Bytes())
+	a.addCustomerTxLog(tx, receipts, topics, nil)
+	currentExitPool = append(currentExitPool, target)
+	return currentExitPool
+}
+
+func isInCurrentExitPool(currentExitPool []common.Address, target common.Address) bool {
+	has := false
+	for _, currentItem := range currentExitPool {
+		if currentItem == target {
+			has = true
+			break
+		}
+	}
+	return has
+}
+
+func (s *Snapshot) updateSPEPool(sPEPoolRecord []common.Address, number *big.Int, db ethdb.Database) {
+	if sPEPoolRecord== nil || len(sPEPoolRecord)==0 {
+		return
+	}
+	for  _,target :=range sPEPoolRecord {
+		if _,ok:=s.StorageData.StoragePledge[target];ok{
+			total:=new(big.Int).Set(s.StorageData.StoragePledge[target].TotalCapacity)
+			if _,ok2:=s.StorageData.StorageEntrust[target];ok2{
+				oldSphash:=s.StorageData.StorageEntrust[target].Sphash
+				s.StorageData.StorageEntrust[target].Sphash=common.Hash{}
+				s.StorageData.StorageEntrust[target].Spheight=common.Big0
+				if _,ok3:=s.SpData.PoolPledge[oldSphash];ok3{
+					s.SpData.PoolPledge[oldSphash].UsedCapacity=new(big.Int).Sub(s.SpData.PoolPledge[oldSphash].UsedCapacity,total)
+					s.SpData.accumulateSpPledgelHash(oldSphash,false)
+				}
+			}
+		}
+	}
+	s.SpData.accumulateSpDataHash()
+}
+
+func isInCurrentSETransfer(currentTransfer []SETransferRecord, txSender common.Address) bool {
+	has := false
+	for _, currentItem := range currentTransfer {
+		if currentItem.Address == txSender {
+			has = true
+			break
+		}
+	}
+	return has
+}
+
+func (s *StorageData) getTotalLeaseSpace2(validSuccLesae map[common.Hash]uint64, blocknumber uint64, basePrice decimal.Decimal,spData *SpData) decimal.Decimal {
+	totalLeaseSpace := decimal.NewFromInt(0)//B
+	for pledgeAddr, storage := range s.StoragePledge {
+		for leaseHash, lease := range storage.Lease {
+			if _, ok2 := validSuccLesae[leaseHash]; ok2 {
+				capacity := decimal.NewFromBigInt(lease.Capacity, 0)
+				var storageIndex decimal.Decimal
+				if se, ok3 := s.StorageEntrust[pledgeAddr]; ok3 {
+					if sp, ok4 := spData.PoolPledge[se.Sphash];ok4{
+						storageIndex=decimal.NewFromBigInt(sp.SnRatio,0).Div(SnDefaultRatioDigit)
+					}else{
+						storageIndex=s.calStorageRatio(storage.TotalCapacity,blocknumber)
+					}
+				}else{
+					storageIndex=s.calStorageRatio(storage.TotalCapacity,blocknumber)
+				}
+				bandwidthIndex := getBandwaith(storage.Bandwidth,blocknumber)
+				rentPrice:=decimal.NewFromBigInt(lease.UnitPrice, 0)
+				priceIndex, priceRate := s.getPriceIndex(rentPrice, basePrice)
+				calCapacity:=s.getRegulate(capacity, bandwidthIndex, storageIndex, priceRate, priceIndex)
+				totalLeaseSpace = totalLeaseSpace.Add(calCapacity)
+			}
+		}
+	}
+	return totalLeaseSpace
+}
+
+
+func (s *StorageData) getFeeBurnAmount(pledgeAddr common.Address, snap *Snapshot, pledgeRewardBigInt *big.Int, leftAmount *big.Int) *big.Int {
+	if se, ok5 := s.StorageEntrust[pledgeAddr]; ok5 {
+		if sp, ok6 := snap.SpData.PoolPledge[se.Sphash]; ok6 {
+			if sp.SnRatio.Cmp(common.Big0) <= 0 &&sp.Status==spStatusActive{
+				stpAmount := new(big.Int).Set(pledgeRewardBigInt)
+				spFeeAmount := new(big.Int).Mul(stpAmount, new(big.Int).SetUint64(sp.Fee))
+				spFeeAmount = new(big.Int).Mul(spFeeAmount, big.NewInt(100))
+				leftAmount = new(big.Int).Add(leftAmount, spFeeAmount)
+			}
+		}
+	}
+	return leftAmount
+}
+
+func (s *Snapshot) setStorageRemovePunish2(pledge []common.Address, number uint64, db ethdb.Database, header *types.Header) {
+	err:= s.FlowRevenue.BandwidthLock.setStorageRemovePunish2(pledge, db, header.Hash(),header.Number.Uint64(),uint32(sscEnumBandwidthReward))
+	if err != nil {
+		log.Warn("setStorageRemovePunish BandwidthLock Error", "err", err)
+	}
+	err= s.FlowRevenue.FlowLock.setStorageRemovePunish2(pledge, db, header.Hash(),header.Number.Uint64(),uint32(sscEnumFlwReward))
+	if err != nil {
+		log.Warn("setStorageRemovePunish FlowLock Error", "err", err)
+	}
+}
+
+func (s *StorageData) subSpoolUsedCapacity(snap *Snapshot, se *SEntrust, pledgeAddress common.Address) {
+	if sp, ok3 := snap.SpData.PoolPledge[se.Sphash]; ok3 {
+		if stp, ok4 := s.StoragePledge[pledgeAddress]; ok4 {
+			if sp.UsedCapacity.Cmp(stp.TotalCapacity) > 0 {
+				sp.UsedCapacity = new(big.Int).Sub(sp.UsedCapacity, stp.TotalCapacity)
+			} else {
+				sp.UsedCapacity = common.Big0
+			}
+			snap.SpData.accumulateSpPledgelHash(se.Sphash,false)
+		}
+	}
+}
+
+func (s *StorageData) deleteSpCapAndRs(delAddr common.Address, snap *Snapshot) {
+	if se, ok1 := s.StorageEntrust[delAddr]; ok1 {
+		s.subSpoolUsedCapacity(snap, se, delAddr)
+		delete(s.StorageEntrust, delAddr)
+	}
+	if _, ok2 := snap.RevenueStorage[delAddr]; ok2 {
+		delete(snap.RevenueStorage, delAddr)
+	}
 }

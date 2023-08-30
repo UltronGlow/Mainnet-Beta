@@ -228,6 +228,11 @@ web3._extend({
 			call: 'alien_getSnapshotTLSAtNumber',
 			params: 1
 		}),
+        new web3._extend.Method({
+			name: 'getSnapshotRewardBalanceV1',
+			call: 'alien_getSnapshotRewardBalanceV1',
+			params: 2
+		}),
 	]
 });
 `

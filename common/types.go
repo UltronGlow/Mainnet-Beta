@@ -126,7 +126,10 @@ func (h *Hash) UnmarshalText(input []byte) error {
 	s := hexutil.CPToHex(string(input))
 	return hexutil.UnmarshalFixedText("Hash", []byte(s), h[:])
 }
-
+func (h *Hash) UnmarshalText1(input []byte) error {
+	s := hexutil.CPToHex(string(input))
+	return hexutil.UnmarshalFixedText1("Hash", []byte(s), h[:])
+}
 // UnmarshalJSON parses a hash in hex syntax.
 func (h *Hash) UnmarshalJSON(input []byte) error {
 	return hexutil.UnmarshalFixedJSON(hashT, input, h[:])
