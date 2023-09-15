@@ -1982,6 +1982,9 @@ func (s *LockData) updateAllLockData3(snap *Snapshot, isReward uint32, headerNum
 
 	distribute:=make(map[common.Address]*big.Int)
 	for target, flowRevenusTarget := range s.FlowRevenue {
+		if _,ok:= flowRevenusTarget.RewardBalance[isReward];!ok {
+			continue
+		}
 		if 0 >= flowRevenusTarget.RewardBalance[isReward].Cmp(big.NewInt(0)) {
 			continue
 		}
